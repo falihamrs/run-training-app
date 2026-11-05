@@ -60,3 +60,8 @@ export function todayLocal(now = new Date()) {
   const d = String(now.getDate()).padStart(2, '0');
   return `${y}-${m}-${d}`;
 }
+
+/** Local calendar date of a UTC millisecond timestamp, given the zone offset in minutes east of UTC. */
+export function localDateOfMs(ms, tzOffsetMin = 0) {
+  return fromUtcMs(Math.floor((ms + tzOffsetMin * 60000) / DAY_MS) * DAY_MS);
+}

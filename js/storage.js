@@ -59,6 +59,7 @@ export async function exportBackup(db) {
     settings: row?.value ?? null,
     plans: await db.plans.toArray(),
     runs: await db.runs.toArray(),
+    selfReport: (await db.settings.get('selfReport'))?.value ?? null,
   };
 }
 
@@ -70,14 +71,52 @@ export async function importBackup(db, data, today) {
   }
   if (!data.settings || typeof data.settings !== 'object') throw new Error('The backup contains no settings.');
   const settings = withDefaults(data.settings, today);
-  await db.transaction('rw', db.settings, db.plans, db.runs, async () => {
+  await db.transaction('rw', db.settings, db.plans, db.runs, db.streams, async () => {
     await db.settings.put({ key: 'main', value: settings, savedAt: new Date().toISOString() });
     await db.plans.clear();
     await db.runs.clear();
+    await db.streams.clear();
     if (Array.isArray(data.plans) && data.plans.length) await db.plans.bulkPut(data.plans);
     if (Array.isArray(data.runs) && data.runs.length) await db.runs.bulkPut(data.runs);
+    if (data.selfReport) await db.settings.put({ key: 'selfReport', value: data.selfReport, savedAt: new Date().toISOString() });
   });
   return settings;
+}
+
+// ---------- runs (milestone 2) ----------
+
+/** Store an analysed run and its stream unless the same activity is already stored. */
+export async function addRun(db, run, stream) {
+  const existing = await db.runs.toArray();
+  const dup = existing.find((r) => r.fingerprint === run.fingerprint
+    || (Math.abs(r.startTime - run.startTime) <= 60000 && Math.abs(r.distanceKm - run.distanceKm) <= 0.02 * Math.max(r.distanceKm, run.distanceKm)));
+  if (dup) return { added: false, duplicateOf: dup.id };
+  const id = await db.runs.add(run);
+  await db.streams.put({ runId: id, ...stream });
+  return { added: true, id };
+}
+
+export async function listRuns(db) {
+  return (await db.runs.orderBy('date').toArray()).sort((a, b) => a.startTime - b.startTime);
+}
+
+export async function updateRun(db, id, changes) {
+  await db.runs.update(id, changes);
+}
+
+export async function deleteRun(db, id) {
+  await db.transaction('rw', db.runs, db.streams, async () => {
+    await db.runs.delete(id);
+    await db.streams.delete(id);
+  });
+}
+
+export async function loadSelfReport(db) {
+  return (await db.settings.get('selfReport'))?.value ?? null;
+}
+
+export async function saveSelfReport(db, value) {
+  await db.settings.put({ key: 'selfReport', value, savedAt: new Date().toISOString() });
 }
 
 export async function requestPersistence() {

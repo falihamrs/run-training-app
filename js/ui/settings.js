@@ -247,7 +247,6 @@ export function mountSettings(root, { storage, settings, savedAt = null, today, 
   function render() {
     const tabs = TABS.map(([id, label]) => `<button type="button" role="tab" class="tab" aria-selected="${id === state.tab}" data-tab="${id}">${label}</button>`).join('');
     root.innerHTML = `
-      <header class="top"><h1>Run Training Planner</h1><p class="muted">Settings</p></header>
       ${storageProblem ? `<p class="notice error">${esc(storageProblem)}</p>` : ''}
       <nav class="tabs" role="tablist">${tabs}</nav>
       <div class="layout">
@@ -455,5 +454,19 @@ export function mountSettings(root, { storage, settings, savedAt = null, today, 
 
   if (storage) storage.isPersisted().then((p) => { state.persisted = p; if (state.tab === 'backup') render(); });
   render();
-  return { state };
+  return {
+    state,
+    /** Open the Thresholds tab with a pre-filled draft (used by History suggestions). */
+    prefillThreshold({ lthr = null, paceSecPerKm = null }) {
+      state.tab = 'thresholds';
+      state.draft = {
+        effectiveFrom: state.settings.thresholds.length ? defaultEffectiveFrom(today) : today,
+        lthr: lthr != null ? String(lthr) : state.draft.lthr,
+        pace: paceSecPerKm != null ? formatPace(paceSecPerKm) : state.draft.pace,
+      };
+      state.draftErrors = [];
+      render();
+    },
+    currentSettings: () => clone(state.settings),
+  };
 }
