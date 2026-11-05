@@ -1,0 +1,11 @@
+{
+  "name": "run-training-app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Browser-only run and trail training plan generator",
+  "scripts": {
+    "test": "node --test",
+    "serve": "python3 -m http.server 8080"
+  }
+}
