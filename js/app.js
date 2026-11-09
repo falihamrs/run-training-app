@@ -1,6 +1,6 @@
 import { todayLocal } from './core/dates.js';
 import { defaultSettings } from './core/defaults.js';
-import { addRun, deletePlan, deleteRun, loadPlan, loadSuggestState, savePlan, saveSuggestState, exportBackup, importBackup, isPersisted, listRuns, loadSelfReport, loadSettings, openDb, requestPersistence, saveSelfReport, saveSettings, updateRun } from './storage.js';
+import { addRun, deletePlan, eraseAll, loadMeta, markExported, validateBackup, deleteRun, loadPlan, loadSuggestState, savePlan, saveSuggestState, exportBackup, importBackup, isPersisted, listRuns, loadSelfReport, loadSettings, openDb, requestPersistence, saveSelfReport, saveSettings, updateRun } from './storage.js';
 import { mountHistory } from './ui/history.js';
 import { mountPlan } from './ui/plan.js';
 import { mountSettings } from './ui/settings.js';
@@ -13,16 +13,22 @@ async function start() {
   let settings = defaultSettings(today);
   let savedAt = null;
   let storageProblem = null;
+  let lastExportedAt = null;
 
   try {
     const db = openDb();
     const loaded = await loadSettings(db, today);
     settings = loaded.settings;
     savedAt = loaded.savedAt;
+    lastExportedAt = (await loadMeta(db)).lastExportedAt ?? null;
     storage = {
       saveSettings: (s) => saveSettings(db, s),
       exportBackup: () => exportBackup(db),
       importBackup: (data) => importBackup(db, data, today),
+      validateBackup: (data) => validateBackup(data),
+      markExported: () => markExported(db),
+      eraseAll: () => eraseAll(db),
+      loadMeta: () => loadMeta(db),
       requestPersistence,
       isPersisted,
       addRun: (run, stream) => addRun(db, run, stream),
@@ -46,7 +52,7 @@ async function start() {
     <div id="page-plan" hidden></div><div id="page-history" hidden></div><div id="page-settings"></div>`;
   const pageEls = { plan: root.querySelector('#page-plan'), history: root.querySelector('#page-history'), settings: root.querySelector('#page-settings') };
   let planUi = { getPlan: () => null };
-  const settingsUi = mountSettings(pageEls.settings, { storage, settings, savedAt, today, storageProblem });
+  const settingsUi = mountSettings(pageEls.settings, { storage, settings, savedAt, today, storageProblem, lastExportedAt, onRestored: () => location.reload() });
   const historyUi = mountHistory(pageEls.history, {
     storage,
     getSettings: () => settingsUi.currentSettings(),
@@ -64,7 +70,9 @@ async function start() {
     today,
     getSettings: () => settingsUi.currentSettings(),
     getHistory: (opts) => historyUi.getSummary(opts),
-    goto: (p) => show(p),
+    goto: (p, tab) => { show(p); if (tab && p === 'settings') settingsUi.openTab(tab); },
+    isSettingsDirty: () => settingsUi.isDirty(),
+    getBackupInfo: async () => (storage ? { lastExportedAt: (await storage.loadMeta()).lastExportedAt ?? null } : null),
     onUseThreshold: (suggestion) => { settingsUi.prefillThreshold(suggestion); show('settings'); },
   });
   function show(page) {
@@ -78,7 +86,18 @@ async function start() {
     const b = e.target.closest('[data-page]');
     if (b) show(b.dataset.page);
   });
+  try {
+    const msg = sessionStorage.getItem('rtp-notice');
+    if (msg) {
+      sessionStorage.removeItem('rtp-notice');
+      root.insertAdjacentHTML('afterbegin', `<p class="notice ok" role="status">${msg.replace(/[<>&]/g, '')}</p>`);
+    }
+  } catch { /* ignore */ }
   show(['#settings', '#history', '#plan'].includes(location.hash) ? location.hash.slice(1) : 'plan');
+}
+
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
 }
 
 start().catch((err) => {

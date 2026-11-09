@@ -127,6 +127,7 @@ export function mountHistory(el, { storage, getSettings, today, tzOffsetMin = -n
     const taken = new Set(runsByWorkout(state.runs).keys());
     for (const file of files) {
       try {
+        if (file.size > 30 * 1024 * 1024) throw new Error('This file is too large to be a run (over 30 MB).');
         const acts = parseActivityFile(await file.text(), file.name);
         let added = 0, skipped = 0, matched = 0, rejected = [];
         for (const act of acts) {

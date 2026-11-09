@@ -60,16 +60,27 @@ export async function exportBackup(db) {
     plans: await db.plans.toArray(),
     runs: await db.runs.toArray(),
     selfReport: (await db.settings.get('selfReport'))?.value ?? null,
+    suggestState: (await db.settings.get('suggestState'))?.value ?? null,
   };
 }
 
 /** Throws an Error with a readable message when the file is not a valid backup. */
-export async function importBackup(db, data, today) {
+export function validateBackup(data) {
   if (!data || data.app !== BACKUP_APP) throw new Error('This file is not a backup from this app.');
   if (typeof data.version !== 'number' || data.version > SETTINGS_VERSION) {
     throw new Error('This backup was made by a newer version of the app.');
   }
   if (!data.settings || typeof data.settings !== 'object') throw new Error('The backup contains no settings.');
+  if (data.plans != null && (!Array.isArray(data.plans) || data.plans.some((p) => !p || typeof p.id !== 'string' || !Array.isArray(p.weeks)))) {
+    throw new Error('The plans in this backup are damaged.');
+  }
+  if (data.runs != null && (!Array.isArray(data.runs) || data.runs.some((r) => !r || typeof r.date !== 'string' || typeof r.distanceKm !== 'number'))) {
+    throw new Error('The runs in this backup are damaged.');
+  }
+}
+
+export async function importBackup(db, data, today) {
+  validateBackup(data);
   const settings = withDefaults(data.settings, today);
   await db.transaction('rw', db.settings, db.plans, db.runs, db.streams, async () => {
     await db.settings.put({ key: 'main', value: settings, savedAt: new Date().toISOString() });
@@ -79,8 +90,27 @@ export async function importBackup(db, data, today) {
     if (Array.isArray(data.plans) && data.plans.length) await db.plans.bulkPut(data.plans);
     if (Array.isArray(data.runs) && data.runs.length) await db.runs.bulkPut(data.runs);
     if (data.selfReport) await db.settings.put({ key: 'selfReport', value: data.selfReport, savedAt: new Date().toISOString() });
+    else await db.settings.delete('selfReport');
+    if (data.suggestState) await db.settings.put({ key: 'suggestState', value: data.suggestState, savedAt: new Date().toISOString() });
+    else await db.settings.delete('suggestState');
   });
+  await db.settings.put({ key: 'meta', value: { lastExportedAt: data.exportedAt ?? null }, savedAt: new Date().toISOString() });
   return settings;
+}
+
+export async function markExported(db) {
+  await db.settings.put({ key: 'meta', value: { lastExportedAt: new Date().toISOString() }, savedAt: new Date().toISOString() });
+}
+
+export async function loadMeta(db) {
+  return (await db.settings.get('meta'))?.value ?? {};
+}
+
+/** Remove every stored table. */
+export async function eraseAll(db) {
+  await db.transaction('rw', db.settings, db.plans, db.runs, db.streams, async () => {
+    await Promise.all([db.settings.clear(), db.plans.clear(), db.runs.clear(), db.streams.clear()]);
+  });
 }
 
 // ---------- runs (milestone 2) ----------

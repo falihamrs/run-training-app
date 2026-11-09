@@ -31,7 +31,7 @@ function tabFor(field) {
  * storage: null (no saving possible) or an object with
  * saveSettings, exportBackup, importBackup, requestPersistence, isPersisted.
  */
-export function mountSettings(root, { storage, settings, savedAt = null, today, storageProblem = null }) {
+export function mountSettings(root, { storage, settings, savedAt = null, today, storageProblem = null, lastExportedAt = null, onRestored = () => {} }) {
   const state = {
     settings: clone(settings),
     saved: JSON.stringify(settings),
@@ -42,6 +42,8 @@ export function mountSettings(root, { storage, settings, savedAt = null, today, 
     draftErrors: [],
     notice: null,
     persisted: false,
+    lastExportedAt,
+    pending: null, // { kind: 'import', name, data } or { kind: 'erase' }
   };
 
   // ---------- derived values ----------
@@ -228,9 +230,16 @@ export function mountSettings(root, { storage, settings, savedAt = null, today, 
       <section class="card">
         <h2>Backup and restore</h2>
         <p class="muted">Your data lives only in this browser. Clearing browser data or switching browsers would erase it, so export a backup now and then. Backups include saved settings (not unsaved edits), plans and run summaries.</p>
-        <p><button type="button" data-action="export" ${storage ? '' : 'disabled'}>Export backup</button></p>
+        <p><button type="button" data-action="export" ${storage ? '' : 'disabled'}>Export backup</button>
+          <span class="muted small">${state.lastExportedAt ? `Last export: ${esc(String(state.lastExportedAt).slice(0, 10))}` : 'No export yet.'}</span></p>
         <label class="field"><span class="lbl">Restore from a backup file</span><input type="file" accept="application/json,.json" data-import="1" ${storage ? '' : 'disabled'}></label>
-        <p class="muted">Restoring replaces the saved settings, plans and runs.</p>
+        <p class="muted">Restoring replaces the saved settings, plans and runs. Uploaded activity streams are not part of a backup; the run summaries are.</p>
+        ${state.pending?.kind === 'import' ? `<p class="notice warn">Replace everything in this browser with <strong>${esc(state.pending.name)}</strong>? <button type="button" class="primary" data-action="import-confirm">Yes, restore</button> <button type="button" data-action="pending-cancel">Cancel</button></p>` : ''}
+      </section>
+      <section class="card">
+        <h2>Erase everything</h2>
+        <p class="muted">Deletes settings, plans, runs and streams from this browser. Export a backup first if you might need them.</p>
+        ${state.pending?.kind === 'erase' ? '<p class="notice warn">This cannot be undone. <button type="button" class="primary" data-action="erase-confirm">Yes, erase everything</button> <button type="button" data-action="pending-cancel">Cancel</button></p>' : `<p><button type="button" data-action="erase" ${storage ? '' : 'disabled'}>Erase everything</button></p>`}
       </section>
       <section class="card">
         <h2>Persistent storage</h2>
@@ -346,6 +355,10 @@ export function mountSettings(root, { storage, settings, savedAt = null, today, 
     else if (action === 'save') await save();
     else if (action === 'export') await exportFile();
     else if (action === 'persist') await persist();
+    else if (action === 'import-confirm') await confirmImport();
+    else if (action === 'erase') { state.pending = { kind: 'erase' }; state.notice = null; render(); }
+    else if (action === 'erase-confirm') await confirmErase();
+    else if (action === 'pending-cancel') { state.pending = null; render(); }
   }
 
   function addThreshold() {
@@ -411,6 +424,8 @@ export function mountSettings(root, { storage, settings, savedAt = null, today, 
       a.download = `run-training-backup-${today}.json`;
       a.click();
       setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+      await storage.markExported();
+      state.lastExportedAt = new Date().toISOString();
       state.notice = { kind: 'ok', text: 'Backup downloaded.' };
     } catch (err) {
       state.notice = { kind: 'error', text: `Could not export: ${err.message}` };
@@ -420,17 +435,40 @@ export function mountSettings(root, { storage, settings, savedAt = null, today, 
 
   async function importFile(file) {
     try {
+      if (file.size > 50 * 1024 * 1024) throw new Error('That file is too large to be a backup.');
       const data = JSON.parse(await file.text());
-      const restored = await storage.importBackup(data);
-      state.settings = clone(restored);
-      state.saved = JSON.stringify(restored);
-      state.savedAt = new Date().toISOString();
-      state.raw = {};
-      state.notice = { kind: 'ok', text: 'Backup restored.' };
+      await storage.validateBackup(data);
+      state.pending = { kind: 'import', name: file.name, data };
+      state.notice = null;
     } catch (err) {
       state.notice = { kind: 'error', text: err instanceof SyntaxError ? 'That file is not valid JSON.' : err.message };
     }
     render();
+  }
+
+  async function confirmImport() {
+    try {
+      await storage.importBackup(state.pending.data);
+      state.pending = null;
+      try { sessionStorage.setItem('rtp-notice', 'Backup restored.'); } catch { /* ignore */ }
+      onRestored();
+    } catch (err) {
+      state.pending = null;
+      state.notice = { kind: 'error', text: `Could not restore: ${err.message}` };
+      render();
+    }
+  }
+
+  async function confirmErase() {
+    try {
+      await storage.eraseAll();
+      try { sessionStorage.setItem('rtp-notice', 'Everything was erased.'); } catch { /* ignore */ }
+      onRestored();
+    } catch (err) {
+      state.pending = null;
+      state.notice = { kind: 'error', text: `Could not erase: ${err.message}` };
+      render();
+    }
   }
 
   async function persist() {
@@ -469,5 +507,7 @@ export function mountSettings(root, { storage, settings, savedAt = null, today, 
       render();
     },
     currentSettings: () => clone(state.settings),
+    isDirty: dirty,
+    openTab(tab) { state.tab = tab; render(); },
   };
 }

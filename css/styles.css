@@ -81,3 +81,4 @@ details.week > summary { cursor: pointer; margin: 0; }
 .workout.today { background: var(--ok-bg); }
 .steps { margin: 6px 0 0; padding-left: 22px; font-size: .9rem; }
 .notice.small { font-size: .85rem; padding: 6px 10px; margin: 6px 0; }
+.top { flex-wrap: wrap; }

@@ -29,8 +29,8 @@ async function copyText(text) {
   }
 }
 
-export function mountPlan(el, { storage, today, getSettings, getHistory, goto, onUseThreshold = () => {} }) {
-  const state = { plan: null, messages: [], loaded: false, notice: null, confirmRegen: false, confirmNew: false, open: new Set(), runs: [], suggestState: {} };
+export function mountPlan(el, { storage, today, getSettings, getHistory, goto, onUseThreshold = () => {}, isSettingsDirty = () => false, getBackupInfo = async () => null }) {
+  const state = { plan: null, messages: [], loaded: false, notice: null, confirmRegen: false, confirmNew: false, open: new Set(), runs: [], suggestState: {}, backup: null };
 
   const ctx = () => {
     const s = getSettings();
@@ -40,6 +40,18 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
   function messagesHtml(list) {
     if (!list.length) return '';
     return `<ul class="checks">${list.map((m) => `<li class="${m.level === 'block' ? 'err' : m.level === 'warn' ? 'warn' : ''}">${esc(m.text)}</li>`).join('')}</ul>`;
+  }
+
+  function bannersHtml() {
+    const out = [];
+    if (isSettingsDirty()) out.push('<p class="notice warn">Your settings have unsaved changes. The plan uses them as shown. <button type="button" class="link" data-go="settings">Open settings</button></p>');
+    const b = state.backup;
+    if (b && (state.plan || state.runs.length)) {
+      const days = b.lastExportedAt ? Math.floor((Date.now() - Date.parse(b.lastExportedAt)) / 86400000) : null;
+      if (days == null) out.push('<p class="notice warn">You have not exported a backup yet. Your data only lives in this browser. <button type="button" class="link" data-go="settings" data-tab="backup">Export a backup</button></p>');
+      else if (days >= 14) out.push(`<p class="notice warn">Your last backup is ${days} days old. <button type="button" class="link" data-go="settings" data-tab="backup">Export a new one</button></p>`);
+    }
+    return out.join('');
   }
 
   function headerCard() {
@@ -169,7 +181,7 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
   }
 
   function render() {
-    el.innerHTML = `${headerCard()}${state.plan ? suggestionsHtml() : ''}${state.plan ? state.plan.weeks.map(weekHtml).join('') : ''}`;
+    el.innerHTML = `${bannersHtml()}${headerCard()}${state.plan ? suggestionsHtml() : ''}${state.plan ? state.plan.weeks.map(weekHtml).join('') : ''}`;
   }
 
   async function generate({ keepPast = false } = {}) {
@@ -179,12 +191,19 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
     const settings = getSettings();
     const now = new Date().toISOString();
     let r;
+    try {
     if (keepPast && state.plan) {
       const history = await getHistory({ planStart: nextMonday(today) });
       r = regenerateFrom(state.plan, settings, history, { today, now });
     } else {
       const history = await getHistory();
       r = generatePlan(settings, history, { today, id: 'main', now });
+    }
+    } catch (err) {
+      console.error(err);
+      state.messages = [{ level: 'block', code: 'error', text: `Something went wrong while building the plan: ${err.message}` }];
+      render();
+      return;
     }
     state.messages = r.messages;
     if (!r.plan) {
@@ -206,7 +225,7 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
       state.plan = await storage.loadPlan();
       state.loaded = true;
     }
-    if (storage) { state.runs = await storage.listRuns(); state.suggestState = await storage.loadSuggestState(); }
+    if (storage) { state.runs = await storage.listRuns(); state.suggestState = await storage.loadSuggestState(); state.backup = await getBackupInfo(); }
     render();
   }
 
@@ -232,7 +251,7 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
   el.addEventListener('click', async (e) => {
     const b = e.target.closest('[data-act],[data-copy-workout],[data-copy-week],[data-go],[data-sg],[data-test]');
     if (!b) return;
-    if (b.dataset.go) return goto(b.dataset.go);
+    if (b.dataset.go) return goto(b.dataset.go, b.dataset.tab);
     if (b.dataset.test) {
       state.plan = insertTest(state.plan, b.dataset.test);
       if (storage) await storage.savePlan(state.plan);
