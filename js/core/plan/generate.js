@@ -1,0 +1,412 @@
+// generatePlan(settings, history, opts) -> Plan. Pure and deterministic (spec sections 4 to 6).
+import { WEEKDAYS, addDays, diffDays, weekdayOf } from '../dates.js';
+import { validateSettings } from '../validate.js';
+import { effectiveStrengthSettings } from './strength.js';
+import { checkFeasibility } from './feasibility.js';
+import { placeRoles } from './layout.js';
+import { ROAD_TABLE, TRAIL_LONG_CAP_H, round5, roadCategory } from './tables.js';
+import * as W from './workouts.js';
+
+const round05 = (x) => Math.round(x * 2) / 2;
+const hasClimbSteps = (code) => ['CLB', 'HIL', 'HIKE', 'DWN', 'INC'].includes(code);
+
+export function generatePlan(settingsIn, history, { today, id = 'main', now = null } = {}) {
+  const v = validateSettings(settingsIn, { today });
+  if (v.errors.length) {
+    return { status: 'BLOCK', messages: v.errors.map((e) => ({ level: 'block', code: 'input', text: e.message })), plan: null };
+  }
+  const settings = v.normalized;
+  const feas = checkFeasibility(settings, history, { effectiveRuns: v.effectiveRunsPerWeek });
+  if (feas.status === 'BLOCK') return { status: 'BLOCK', messages: feas.messages, plan: null };
+
+  const { params } = feas;
+  const { race, schedule } = settings;
+  const trail = params.trail;
+  const messages = [...feas.messages];
+  const available = WEEKDAYS.filter((d) => !(schedule.unavailableDays ?? []).includes(d));
+  const terrain = schedule.dayTerrain;
+  const T = params.entry.paceSecPerKm ?? null;
+  const easyPace = !trail && T ? Math.round(T * 1.215) : history.easyPaceSecPerKm ?? 390;
+  const cat = trail ? null : params.cat;
+  const goalPace = trail ? null : Math.round((race.goalTimeSec && (params.predictedSec - race.goalTimeSec) / params.predictedSec < 0.1 ? race.goalTimeSec : params.predictedSec) / race.distanceKm);
+  const strengthPerWeek = effectiveStrengthSettings(settings);
+  const raceDate = race.date;
+  const raceWeekday = weekdayOf(raceDate);
+  const raceIdx = WEEKDAYS.indexOf(raceWeekday);
+
+  const vol = params.volume;
+  const nWeeks = vol.weeks.length;
+  const layoutCache = new Map();
+  const layoutFor = (key, opts) => {
+    if (!layoutCache.has(key)) layoutCache.set(key, placeRoles({ trail, terrain, longDay: schedule.longRunDay, ...opts }));
+    return layoutCache.get(key);
+  };
+
+  const state = {
+    ptr: { THR: 0, VO2: 0, CLB: 0, HIL: 0, DWN: 0, FAR: 0, TMP: 0, HIKE: 0, MP: 0 },
+    prevLong: trail ? Math.min(history.longestRunMin ?? 0, 9999) : history.longestRunKm ?? 0,
+    lastLoadLong: 0,
+    phaseIdx: { base: 0, build: 0, peak: 0, taper: 0 },
+  };
+  const seenLayoutMessages = new Set();
+  const weeks = [];
+
+  for (const vw of vol.weeks) {
+    const start = addDays(params.startMonday, 7 * (vw.n - 1));
+    const isRaceWeek = vw.n === nWeeks;
+    const down = vw.kind === 'down';
+    state.phaseIdx[vw.phase] += 1;
+    const pIdx = state.phaseIdx[vw.phase];
+    const flags = [];
+
+    // ---- layout ----
+    const b2bWeek = trail && vw.phase === 'peak' && pIdx % 2 === 0 && !down && params.TrMin >= 240;
+    const layoutOpts = { runs: v.effectiveRunsPerWeek, available, b2b: b2bWeek };
+    let layout;
+    if (isRaceWeek) {
+      const raceAvail = available.filter((d) => WEEKDAYS.indexOf(d) < raceIdx - 0 && WEEKDAYS.indexOf(d) <= raceIdx - 1);
+      layout = layoutFor(`race-${raceWeekday}`, { ...layoutOpts, available: raceAvail, runs: Math.min(layoutOpts.runs, Math.max(2, raceAvail.length)), noLong: true, b2b: false });
+    } else {
+      layout = layoutFor(b2bWeek ? 'b2b' : 'normal', layoutOpts);
+    }
+    if (!layout) {
+      flags.push('Could not place the weekly runs on the available days.');
+      layout = { assign: {}, messages: [] };
+    }
+    for (const m of layout.messages) {
+      if (!seenLayoutMessages.has(m)) { seenLayoutMessages.add(m); messages.push({ level: 'warn', code: 'layout', text: m }); }
+    }
+    const assign = { ...layout.assign };
+    if (down) for (const d of Object.keys(assign)) if (assign[d] === 'Q2') assign[d] = 'E';
+    const dayOfRole = (r) => Object.keys(assign).find((d) => assign[d] === r);
+    const runCount = Object.keys(assign).length;
+
+    // ---- distribute volume ----
+    const workouts = [];
+    const mk = (day, code, role, steps, extra = {}) => {
+      const min = W.totalMinutes(steps);
+      workouts.push({
+        id: `w${vw.n}-${day}`, date: addDays(start, WEEKDAYS.indexOf(day)), weekday: day, week: vw.n,
+        code, name: extra.name ?? W.NAMES[code] ?? code, role, terrain: terrain[day], steps, plannedMin: min,
+        plannedKm: trail ? null : Math.round(((min * 60) / (extra.paceFor ?? easyPace * (code === 'EZ' || code === 'RC' || code.startsWith('L') ? 1 : 0.93))) * 10) / 10,
+        plannedVertM: extra.vertM ?? 0, notes: extra.notes ?? [], locked: false,
+      });
+    };
+
+    const qCode = {};
+    const longDay = dayOfRole('L');
+    const q1Day = dayOfRole('Q1');
+    const q2Day = dayOfRole('Q2');
+    const medDay = dayOfRole('M');
+    const weekMin = trail ? vw.targetHours * 60 : null;
+    const weekKm = trail ? null : vw.targetKm;
+
+    // long run size
+    let longSize = null;
+    if (longDay) {
+      if (trail) {
+        const share = layout.b2b ? 0.4 : runCount <= 4 ? 0.5 : runCount === 5 ? 0.45 : 0.4;
+        if (down) longSize = Math.round(0.8 * state.lastLoadLong);
+        else {
+          longSize = Math.min(share * weekMin, params.peakLongMin, state.prevLong + 20);
+          longSize = Math.max(30, round5(longSize));
+          state.lastLoadLong = longSize;
+        }
+        state.prevLong = Math.max(state.prevLong, longSize);
+      } else {
+        const share = runCount <= 4 ? 0.35 : runCount === 5 ? 0.3 : 0.28;
+        if (down) longSize = round05(0.8 * state.lastLoadLong);
+        else {
+          longSize = round05(Math.max(3, Math.min(share * weekKm, params.peakLong, state.prevLong + 2)));
+          state.lastLoadLong = longSize;
+        }
+        state.prevLong = Math.max(state.prevLong, longSize);
+      }
+    }
+    const longMin = longSize == null ? 0 : trail ? longSize : Math.round((longSize * easyPace) / 60);
+
+    // quality sessions
+    const quality = {};
+    const nextRung = (type, ladderLen) => {
+      const r = Math.min(state.ptr[type], ladderLen - 1);
+      return r;
+    };
+    const bump = (type) => { state.ptr[type] += 1; };
+    if (down) for (const k of Object.keys(state.ptr)) state.ptr[k] = Math.max(0, state.ptr[k] - 2);
+
+    const phase = vw.phase;
+    const pickRoad = (slot) => {
+      // returns { code, steps, extra }
+      const cap = (km, frac, abs) => km <= frac * weekKm && (abs == null || km <= abs);
+      const thr = (rungWanted) => {
+        let r = Math.min(rungWanted, W.THR_LADDER.length - 1);
+        const hardKm = (rung) => (W.THR_LADDER[rung][0] * W.THR_LADDER[rung][1] * 60) / T / 1;
+        while (r > 0 && !cap(hardKm(r), 0.1)) r--;
+        return r;
+      };
+      const vo2 = (rungWanted) => {
+        let r = Math.min(rungWanted, W.VO2_LADDER.length - 1);
+        const hardKm = (rung) => (W.VO2_LADDER[rung][0] * W.VO2_LADDER[rung][1] * 60) / (T * 0.93);
+        while (r > 0 && !cap(hardKm(r), 0.08, 8)) r--;
+        return r;
+      };
+      if (phase === 'base') {
+        if (slot === 'Q2') return null;
+        const useHill = state.ptr.FAR % 2 === 1;
+        const reps = Math.min(10, 6 + state.ptr.FAR);
+        bump('FAR');
+        return useHill ? { code: 'HIL', steps: W.hillRepeatSteps(Math.min(4, state.ptr.HIL++)) } : { code: 'FAR', steps: W.fartlekSteps(reps) };
+      }
+      if (phase === 'taper') {
+        if (slot === 'Q2') return null;
+        return cat === '5k' || cat === '10k' ? { code: 'RP', steps: W.racePaceSteps(cat, goalPace).slice(0, 3).map((s) => (s.kind === 'repeat' ? { ...s, reps: Math.max(2, Math.ceil(s.reps / 2)) } : s)).concat([W.COOL]) } : { code: 'THR', steps: W.thresholdSteps(0) };
+      }
+      if (phase === 'build') {
+        if (slot === 'Q1') { const r = thr(nextRung('THR', W.THR_LADDER.length)); bump('THR'); return { code: 'THR', steps: W.thresholdSteps(r) }; }
+        if (cat === 'marathon') return { code: 'TMP', steps: W.tempoSteps(30, 'Z3'), extra: { name: 'Steady run (Z3)' } };
+        const r = vo2(nextRung('VO2', W.VO2_LADDER.length)); bump('VO2');
+        return { code: 'VO2', steps: W.vo2Steps(r) };
+      }
+      // peak
+      if (slot === 'Q1') return { code: 'RP', steps: W.racePaceSteps(cat, goalPace) };
+      return { code: 'THR', steps: W.thresholdSteps(thr(3)), extra: { name: 'Threshold maintenance' } };
+    };
+
+    const pickTrail = (slot, day) => {
+      const t = terrain[day];
+      if (phase === 'base') {
+        if (slot === 'Q1') { const reps = Math.min(10, 6 + state.ptr.FAR); bump('FAR'); return { code: 'FAR', steps: W.fartlekSteps(Math.min(8, reps), { trail: true }), extra: { name: 'Flat fartlek by heart rate' } }; }
+        if (t === 'hills') { const r = Math.min(4, state.ptr.HIL++); return { code: 'HIL', steps: W.hillRepeatSteps(r), climb: true }; }
+        if (t === 'incline') return { code: 'INC', steps: W.inclineSteps('steady', 40), climb: true };
+        return null;
+      }
+      if (phase === 'taper') {
+        if (slot === 'Q2') return null;
+        return { code: 'TMP', steps: W.tempoSteps(15), extra: { name: 'Short tempo (Z4)' } };
+      }
+      if (phase === 'build') {
+        if (slot === 'Q1') { const m = W.TMP_LADDER_MIN[nextRung('TMP', W.TMP_LADDER_MIN.length)]; bump('TMP'); return { code: 'TMP', steps: W.tempoSteps(m), extra: { name: 'Flat tempo (Z4)' } }; }
+        if (t === 'hills') {
+          if (pIdx >= 3 && pIdx % 2 === 1) { const r = Math.min(4, state.ptr.DWN++); return { code: 'DWN', steps: W.downhillSteps(r), climb: false }; }
+          const r = nextRung('CLB', W.CLB_LADDER.length); bump('CLB');
+          return { code: 'CLB', steps: W.climbSteps(r), climb: true };
+        }
+        if (t === 'incline') return { code: 'INC', steps: W.inclineSteps('intervals', 0), climb: true };
+        return { code: 'TMP', steps: W.tempoSteps(25), extra: { name: 'Flat tempo (Z4)' } };
+      }
+      // peak
+      if (slot === 'Q1') return { code: 'TMP', steps: W.tempoSteps(20), extra: { name: 'Tempo maintenance (Z4)' } };
+      if (t === 'hills') { const r = nextRung('HIKE', 6); bump('HIKE'); return { code: 'HIKE', steps: W.hikeSteps(r), climb: true }; }
+      if (t === 'incline') return { code: 'INC', steps: W.inclineSteps('intervals', 0), climb: true };
+      return { code: 'TMP', steps: W.tempoSteps(20), extra: { name: 'Tempo maintenance (Z4)' } };
+    };
+
+    if (q1Day) quality.Q1 = trail ? pickTrail('Q1', q1Day) : pickRoad('Q1');
+    if (q2Day) quality.Q2 = trail ? pickTrail('Q2', q2Day) : pickRoad('Q2');
+    for (const [slot, q] of Object.entries(quality)) {
+      if (!q) { const d = slot === 'Q1' ? q1Day : q2Day; assign[d] = 'E'; }
+    }
+
+    const qMin = (slot) => (quality[slot] ? W.totalMinutes(quality[slot].steps) + (quality[slot].code === 'INC' && quality[slot].steps.length === 1 ? 0 : 0) : 0);
+    let q1Min = qMin('Q1');
+    let q2Min = qMin('Q2');
+    if (trail && quality.Q2?.code === 'INC' && quality.Q2.steps[0].kind === 'repeat') { q2Min = W.totalMinutes(quality.Q2.steps); }
+
+    // medium (b2b)
+    const medMin = medDay ? Math.max(30, round5((trail ? 0.5 : 0.5) * longMin)) : 0;
+
+    // time available for easy runs
+    let totalMinTarget;
+    if (trail) totalMinTarget = weekMin;
+    else totalMinTarget = Math.round((weekKm * easyPace) / 60);
+    const roleOfDay = Object.fromEntries(Object.entries(assign));
+    let easyDays = Object.keys(roleOfDay).filter((d) => roleOfDay[d] === 'E' || roleOfDay[d] === 'R');
+    let remaining = totalMinTarget - longMin - medMin - (quality.Q1 ? q1Min : 0) - (quality.Q2 ? q2Min : 0);
+    const weights = (d) => (roleOfDay[d] === 'R' ? 0.6 : 1);
+    const floorMin = trail ? 20 : Math.round((3 * easyPace) / 60) > 20 ? Math.round((3 * easyPace) / 60) : 20;
+    const droppedDays = [];
+    const sizeOf = () => {
+      const sw = easyDays.reduce((s, d) => s + weights(d), 0);
+      return Object.fromEntries(easyDays.map((d) => [d, (remaining * weights(d)) / sw]));
+    };
+    let sizes = easyDays.length ? sizeOf() : {};
+    while (easyDays.some((d) => sizes[d] < floorMin) && easyDays.some((d) => roleOfDay[d] === 'R')) {
+      const r = easyDays.find((d) => roleOfDay[d] === 'R');
+      easyDays = easyDays.filter((d) => d !== r);
+      droppedDays.push(r);
+      delete assign[r];
+      sizes = easyDays.length ? sizeOf() : {};
+    }
+    if (droppedDays.length) flags.push('A recovery run was dropped because the weekly volume is too small to split further.');
+    for (const d of easyDays) if (sizes[d] < floorMin) sizes[d] = floorMin;
+
+    // ---- climbing allocation (trail) ----
+    const alloc = {};
+    if (trail) {
+      let vert = vw.targetVertM;
+      const climbQDay = quality.Q2?.climb ? q2Day : null;
+      const hillsRun = Object.keys(assign).find((d) => d !== longDay && terrain[d] === 'hills' && assign[d] !== 'Q1' && !(climbQDay === d));
+      const recipients = [];
+      if (longDay) recipients.push({ day: longDay, share: 0.5, mins: longMin });
+      if (climbQDay) recipients.push({ day: climbQDay, share: 0.25, mins: q2Min });
+      const next = medDay ?? hillsRun;
+      if (next) recipients.push({ day: next, share: 0.25, mins: medDay ? medMin : sizes[next] ?? 30 });
+      let placed = 0;
+      for (const r of recipients) {
+        const want = vert * r.share;
+        const capM = Math.round((400 * r.mins) / 60);
+        const got = Math.min(want, capM);
+        alloc[r.day] = Math.round(got / 10) * 10;
+        placed += alloc[r.day];
+      }
+      const lost = Math.round(vert - placed);
+      if (vert > 0 && !isRaceWeek && vw.phase !== 'taper' && lost > Math.max(50, 0.05 * vert)) {
+        flags.push(`${lost} m of the weekly climbing could not be placed on the available days.`);
+      }
+    }
+
+    // ---- build the day workouts ----
+    const longSteps = (() => {
+      if (!longDay) return null;
+      const climbM = alloc[longDay] ?? 0;
+      if (trail) {
+        if (layout.b2b) return { code: 'B2B', steps: [{ kind: 'easy', durationMin: longMin, zone: 'Z2', zoneHigh: 'Z3', flat: false, climbM, note: 'Day 1 of 2. Hike steep sections; climbs at Z3 at most' }], name: 'Long run (day 1 of back-to-back)' };
+        if (phase === 'peak' && pIdx % 2 === 1 && !down) return { code: 'SIM', steps: [{ kind: 'easy', durationMin: longMin, zone: 'Z2', zoneHigh: 'Z3', flat: false, climbM, note: 'Race gear and race fuelling. Z2 on flat, Z3 on climbs' }], notes: ['Practise your own race fuelling (commonly 30–60 g of carbohydrate per hour, tested in training).'] };
+        return { code: 'LR', steps: [{ kind: 'easy', durationMin: longMin, zone: 'Z2', flat: false, climbM, note: 'Hike the steep parts' }] };
+      }
+      if (phase === 'peak' && cat === 'marathon' && pIdx % 2 === 1 && !down) {
+        const lad = W.MP_LADDER_KM.filter((k) => k <= 0.4 * longSize);
+        if (lad.length) {
+          const km = lad[Math.min(state.ptr.MP, lad.length - 1)];
+          state.ptr.MP += 1;
+          return { code: 'LRM', steps: W.longMarathonBlockSteps(longMin, Math.round((km * goalPace) / 60)), name: `Long run with ${km} km at marathon pace` };
+        }
+      }
+      if ((phase === 'peak' || (phase === 'build' && pIdx % 2 === 0)) && !down && phase !== 'taper') return { code: 'LRP', steps: W.longProgressionSteps(longMin) };
+      return { code: 'LR', steps: W.easySteps(longMin, { zone: 'Z2' }) };
+    })();
+
+    for (const d of WEEKDAYS) {
+      const role = assign[d];
+      if (!role) continue;
+      if (role === 'L') mk(d, longSteps.code, 'L', longSteps.steps, { name: longSteps.name, vertM: alloc[d] ?? 0, notes: longSteps.notes, paceFor: easyPace });
+      else if (role === 'M') mk(d, 'MED', 'M', W.easySteps(medMin, { zone: 'Z2', flat: false, climbM: alloc[d] ?? 0, note: 'Day 2 of 2, on tired legs' }), { vertM: alloc[d] ?? 0 });
+      else if (role === 'Q1' || role === 'Q2') {
+        const q = quality[role];
+        if (q.steps) {
+          const stepsWithClimb = q.steps.map((s) => (s.climbM !== undefined || (q.climb && (s.kind === 'repeat' || s.kind === 'steady')) ? { ...s, climbM: alloc[d] ?? 0 } : s));
+          mk(d, q.code, role, stepsWithClimb, { name: q.extra?.name, vertM: q.climb ? alloc[d] ?? 0 : 0 });
+        }
+      } else if (role === 'E' || role === 'R') {
+        const min = round5(sizes[d] ?? floorMin);
+        const rec = role === 'R';
+        const hill = terrain[d] === 'hills';
+        const climbM = alloc[d] ?? 0;
+        mk(d, rec ? 'RC' : 'EZ', role, W.easySteps(min, { zone: rec ? 'Z1' : 'Z2', flat: !(trail && hill && climbM), climbM }), { vertM: climbM });
+      }
+    }
+    // strides on up to two flat easy runs
+    let nStr = 0;
+    for (const w of workouts) {
+      if (w.code === 'EZ' && nStr < 2 && (!trail || terrain[w.weekday] === 'flat' || terrain[w.weekday] === 'incline') && vw.phase !== 'taper-last') {
+        w.steps = [...w.steps, W.strides(true)];
+        w.plannedMin = W.totalMinutes(w.steps);
+        w.hasStrides = true;
+        nStr++;
+      }
+    }
+
+    // intensity check: at least 75% of time in Z1 and Z2
+    const easyShare = (list) => {
+      let tot = 0, easy = 0;
+      for (const w of list) for (const s of w.steps) {
+        if (s.kind === 'exercise') continue;
+        const m = W.stepMinutes(s);
+        tot += m;
+        const z = s.kind === 'repeat' ? null : s.zone;
+        if (s.kind === 'repeat') { const mm = (p) => (p.durationMin ?? 0) + (p.durationSec ?? 0) / 60; tot += 0; easy += s.reps * mm(s.rec); }
+        else if (z === 'Z1' || z === 'Z2') easy += m;
+      }
+      return tot ? easy / tot : 1;
+    };
+    if (easyShare(workouts) < 0.75 && q2Day && workouts.some((w) => w.role === 'Q2')) {
+      const w = workouts.find((x) => x.role === 'Q2');
+      const min = round5(w.plannedMin);
+      w.code = 'EZ'; w.name = W.NAMES.EZ; w.role = 'E'; w.steps = [...W.easySteps(min, { zone: 'Z2' }), W.strides(true)]; w.plannedMin = W.totalMinutes(w.steps); w.plannedVertM = 0;
+      flags.push('Quality session 2 became an easy run with strides to keep at least 75% of the time easy.');
+    }
+
+    // strength
+    const sPlanned = (() => {
+      if (isRaceWeek) return 0;
+      if (vw.phase === 'peak') return Math.min(strengthPerWeek, 1);
+      if (vw.phase === 'taper') return Math.min(strengthPerWeek, 1);
+      return strengthPerWeek;
+    })();
+    if (sPlanned > 0) {
+      const byDay = Object.fromEntries(workouts.map((w) => [w.weekday, w]));
+      const isHard = (d) => ['L', 'Q1', 'Q2', 'M'].includes(byDay[d]?.role) && byDay[d].role !== 'M';
+      const cands = WEEKDAYS.filter((d) => available.includes(d) && !isHard(d) && !isHard(WEEKDAYS[(WEEKDAYS.indexOf(d) + 1) % 7]) && !(byDay[d] && byDay[d].role === 'M'));
+      const score = (d) => (byDay[d] ? 0 : 1) * 0 + (byDay[d] ? 0 : 0.5) + WEEKDAYS.indexOf(d) / 100;
+      const sorted = [...cands].sort((a, b) => score(a) - score(b));
+      const chosen = [];
+      const ideal = sPlanned === 2 ? ['Mon', 'Thu'] : ['Wed'];
+      const order = [...ideal.filter((d) => sorted.includes(d)), ...sorted];
+      for (const d of order) {
+        if (chosen.length >= sPlanned) break;
+        if (chosen.every((c) => Math.abs(WEEKDAYS.indexOf(c) - WEEKDAYS.indexOf(d)) >= 2) && !(race.date === addDays(start, WEEKDAYS.indexOf(d)))) chosen.push(d);
+      }
+      if (chosen.length < sPlanned) flags.push(`Only ${chosen.length} of ${sPlanned} strength sessions fit without sitting before a hard day.`);
+      for (const d of chosen) {
+        const steps = W.strengthSteps();
+        workouts.push({
+          id: `w${vw.n}-${d}-S`, date: addDays(start, WEEKDAYS.indexOf(d)), weekday: d, week: vw.n, code: 'STRG', name: W.NAMES.STRG, role: 'S',
+          terrain: 'gym', steps, plannedMin: 25, plannedKm: null, plannedVertM: 0, notes: ['At the gym. 20 to 30 minutes, stop 2 reps short of failure.'], locked: false,
+        });
+      }
+    }
+
+    // race week trims
+    let kept = workouts;
+    if (isRaceWeek) kept = workouts.filter((w) => w.date < raceDate);
+    kept.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.role === 'S' ? 1 : -1));
+
+    const runW = kept.filter((w) => w.role !== 'S');
+    weeks.push({
+      n: vw.n, start, phase: vw.phase, kind: vw.kind, targetKm: vw.targetKm ?? null, targetHours: vw.targetHours ?? null, targetVertM: vw.targetVertM ?? null,
+      reason: vw.reason, flags, workouts: kept,
+      plannedMin: runW.reduce((s, w) => s + w.plannedMin, 0),
+      plannedKm: trail ? null : Math.round(runW.reduce((s, w) => s + (w.plannedKm ?? 0), 0) * 10) / 10,
+      plannedVertM: runW.reduce((s, w) => s + (w.plannedVertM ?? 0), 0),
+    });
+  }
+
+  // shakeout the day before the race, and the race itself
+  const last = weeks[weeks.length - 1];
+  const dayBefore = addDays(raceDate, -1);
+  const prevWeek = diffDays(last.start, dayBefore) < 0 ? weeks[weeks.length - 2] : last;
+  if (prevWeek) {
+    const existing = prevWeek.workouts.find((w) => w.date === dayBefore && w.role !== 'S');
+    const steps = W.shakeoutSteps();
+    if (existing) {
+      Object.assign(existing, { code: 'SHK', name: W.NAMES.SHK, role: 'E', steps, plannedMin: W.totalMinutes(steps), plannedVertM: 0, plannedKm: trail ? null : 3 });
+    } else {
+      prevWeek.workouts.push({ id: `w${prevWeek.n}-${weekdayOf(dayBefore)}-SHK`, date: dayBefore, weekday: weekdayOf(dayBefore), week: prevWeek.n, code: 'SHK', name: W.NAMES.SHK, role: 'E', terrain: 'flat', steps, plannedMin: W.totalMinutes(steps), plannedKm: trail ? null : 3, plannedVertM: 0, notes: [], locked: false });
+      prevWeek.workouts.sort((a, b) => (a.date < b.date ? -1 : 1));
+    }
+  }
+  last.workouts.push({
+    id: `race`, date: raceDate, weekday: raceWeekday, week: last.n, code: 'RACE', name: trail ? `Race: ${race.distanceKm} km, ${race.elevationGainM} m` : `Race: ${race.distanceKm} km`, role: 'RACE', terrain: trail ? 'hills' : 'flat',
+    steps: [], plannedMin: trail ? Math.round(params.TrMin) : Math.round(params.predictedSec / 60), plannedKm: race.distanceKm, plannedVertM: trail ? race.elevationGainM : 0, notes: [], locked: false,
+  });
+
+  const plan = {
+    id, createdAt: now ?? null, mode: trail ? 'trail' : 'road', status: feas.status,
+    race: { ...race, kmEffort: trail ? params.effort : null, expectedDurationMin: trail ? params.TrRange : null, predictedSec: trail ? null : params.predictedSec },
+    goalPaceSecPerKm: goalPace, easyPaceSecPerKm: easyPace, startDate: params.startMonday, raceDate,
+    phases: vol.phases, peak: { km: vol.peakKm, hours: vol.peakHours, vertM: vol.peakVertM, longRunMin: params.peakLongMin ?? null, longRunKm: params.peakLong ?? null },
+    settingsSnapshot: { runsPerWeek: v.effectiveRunsPerWeek, longRunDay: schedule.longRunDay, dayTerrain: terrain, unavailableDays: schedule.unavailableDays ?? [], experience: settings.athlete.experience },
+    weeks,
+  };
+  return { status: feas.status, messages, plan };
+}

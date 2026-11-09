@@ -12,8 +12,8 @@ The full design is in the spec document ("Run Training Plan Generator: Detailed 
 | --- | --- |
 | 1. Settings: race, schedule, thresholds, Coros zones, day terrain, backup | Done |
 | 2. TCX upload and history analysis | Done |
-| 3. Plan generator and tests | Next |
-| 4. Plan view and export (text, CSV) | |
+| 3. Plan generator and tests | Done |
+| 4. Plan view and export (text, CSV) | Next |
 | 5. Tracking: planned vs. actual | |
 | 6. Threshold update suggestions | |
 | 7. Backup and polish | |
