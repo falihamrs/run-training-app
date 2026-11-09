@@ -10,7 +10,23 @@ import * as W from './workouts.js';
 const round05 = (x) => Math.round(x * 2) / 2;
 const hasClimbSteps = (code) => ['CLB', 'HIL', 'HIKE', 'DWN', 'INC'].includes(code);
 
-export function generatePlan(settingsIn, history, { today, id = 'main', now = null, allowShort = false, overrideEntry = false } = {}) {
+const COVERAGE_MIN = 0.85;
+
+// How much of each weekly target the placed workouts actually reach, over build and peak load weeks.
+function coverageOf(weeks, trail) {
+  const load = weeks.filter((w) => w.kind === 'load' && (w.phase === 'build' || w.phase === 'peak'));
+  const measure = (label, target, placed) => {
+    const t = load.reduce((sum, w) => sum + (target(w) ?? 0), 0);
+    return t > 0 ? { label, ratio: load.reduce((sum, w) => sum + (placed(w) ?? 0), 0) / t } : null;
+  };
+  const list = (trail
+    ? [measure('climbing', (w) => w.targetVertM, (w) => w.plannedVertM), measure('weekly time', (w) => (w.targetHours ?? 0) * 60, (w) => w.plannedMin)]
+    : [measure('weekly distance', (w) => w.targetKm, (w) => w.plannedKm)]
+  ).filter(Boolean);
+  return { worst: list.length ? Math.min(...list.map((m) => m.ratio)) : 1, gaps: list.filter((m) => m.ratio < COVERAGE_MIN) };
+}
+
+export function generatePlan(settingsIn, history, { today, id = 'main', now = null, allowShort = false, overrideEntry = false, noRunAdvice = false } = {}) {
   const v = validateSettings(settingsIn, { today });
   if (v.errors.length) {
     return { status: 'BLOCK', messages: v.errors.map((e) => ({ level: 'block', code: 'input', text: e.message })), plan: null };
@@ -400,13 +416,24 @@ export function generatePlan(settingsIn, history, { today, id = 'main', now = nu
     steps: [], plannedMin: trail ? Math.round(params.TrMin) : Math.round(params.predictedSec / 60), plannedKm: race.distanceKm, plannedVertM: trail ? race.elevationGainM : 0, notes: [], locked: false,
   });
 
-  if (trail) {
-    const load = weeks.filter((w) => w.kind === 'load' && (w.phase === 'build' || w.phase === 'peak') && w.targetVertM);
-    const target = load.reduce((t, w) => t + w.targetVertM, 0);
-    const placed = load.reduce((t, w) => t + w.plannedVertM, 0);
-    if (target > 0 && placed / target < 0.85) {
-      messages.push({ level: 'warn', code: 'climbPlaced', text: `With ${v.effectiveRunsPerWeek} runs a week only about ${Math.round((100 * placed) / target)}% of the climbing target fits into your hills and incline days. Another run day, or more hills or incline days, would close the gap.` });
+  const coverage = coverageOf(weeks, trail);
+  if (!noRunAdvice && coverage.worst < COVERAGE_MIN) {
+    const maxRuns = Math.min(7, available.length);
+    let better = null;
+    for (let r = v.effectiveRunsPerWeek + 1; r <= maxRuns && !better; r++) {
+      const trial = generatePlan({ ...settingsIn, schedule: { ...settingsIn.schedule, runsPerWeek: r } }, history, { today, id, now, allowShort, overrideEntry, noRunAdvice: true });
+      if (trial.plan) {
+        const c = coverageOf(trial.plan.weeks, trail);
+        if (c.worst >= COVERAGE_MIN) better = { runs: r, coverage: c };
+      }
     }
+    const gaps = coverage.gaps.map((g) => `${g.label} (${Math.round(g.ratio * 100)}% of target)`).join(' and ');
+    const fix = better
+      ? `Raise runs per week to ${better.runs} to cover it.`
+      : maxRuns > v.effectiveRunsPerWeek
+        ? `Even ${maxRuns} runs a week does not fully cover it, so consider a later start with more weeks, a longer lead time, or an easier goal.`
+        : 'You have no more available days, so free up another day or consider an easier goal.';
+    messages.push({ level: 'warn', code: 'runsTooFew', recommendedRuns: better?.runs ?? null, text: `${v.effectiveRunsPerWeek} runs a week is not enough to reach this goal: ${gaps}. ${fix}` });
   }
   const finalStatus = messages.some((m) => m.level === 'warn') ? 'WARN' : 'OK';
 

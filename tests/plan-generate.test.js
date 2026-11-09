@@ -169,3 +169,15 @@ test('a low baseline blocks a mid-size trail race unless the entry check is over
   assert.ok(r.plan);
   assert.ok(r.messages.some((m) => m.code === 'entry' && m.level === 'warn'));
 });
+
+test('too few runs a week for the climbing target recommends more runs', () => {
+  const o = { mode: 'trail', distanceKm: 25, gain: 2300, terrain: TERRAIN, weeks: 24, runs: 3 };
+  const r = gen(o, { baselineWeeklyHours: 4, longestRunMin: 120, baselineWeeklyVertM: 400 });
+  const w = r.messages.find((m) => m.code === 'runsTooFew');
+  if (w) {
+    assert.ok(w.recommendedRuns === null || w.recommendedRuns > 3);
+    assert.match(w.text, /runs a week is not enough/);
+  }
+  const more = gen({ ...o, runs: 5 }, { baselineWeeklyHours: 4, longestRunMin: 120, baselineWeeklyVertM: 400 });
+  assert.ok(!more.messages.some((m) => m.code === 'runsTooFew' && m.recommendedRuns !== null));
+});
