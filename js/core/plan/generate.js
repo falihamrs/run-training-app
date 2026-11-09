@@ -10,13 +10,13 @@ import * as W from './workouts.js';
 const round05 = (x) => Math.round(x * 2) / 2;
 const hasClimbSteps = (code) => ['CLB', 'HIL', 'HIKE', 'DWN', 'INC'].includes(code);
 
-export function generatePlan(settingsIn, history, { today, id = 'main', now = null, allowShort = false } = {}) {
+export function generatePlan(settingsIn, history, { today, id = 'main', now = null, allowShort = false, overrideEntry = false } = {}) {
   const v = validateSettings(settingsIn, { today });
   if (v.errors.length) {
     return { status: 'BLOCK', messages: v.errors.map((e) => ({ level: 'block', code: 'input', text: e.message })), plan: null };
   }
   const settings = v.normalized;
-  const feas = checkFeasibility(settings, history, { effectiveRuns: v.effectiveRunsPerWeek, allowShort });
+  const feas = checkFeasibility(settings, history, { effectiveRuns: v.effectiveRunsPerWeek, allowShort, overrideEntry });
   if (feas.status === 'BLOCK') return { status: 'BLOCK', messages: feas.messages, plan: null };
 
   const { params } = feas;

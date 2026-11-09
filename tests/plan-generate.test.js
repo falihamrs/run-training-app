@@ -159,3 +159,13 @@ test('plans longer than 24 weeks start with held weeks', () => {
   assert.equal(p.weeks.length, 30);
   assert.equal(p.weeks[0].kind, 'hold');
 });
+
+test('a low baseline blocks a mid-size trail race unless the entry check is overridden', () => {
+  const s = settingsFor({ mode: 'trail', distanceKm: 24, gain: 1100, terrain: TERRAIN, runs: 3, weeks: 11 });
+  const low = hist({ baselineWeeklyHours: 2, baselineWeeklyVertM: 60, longestRunMin: 80 });
+  assert.equal(generatePlan(s, low, { today: TODAY }).status, 'BLOCK');
+  const r = generatePlan(s, low, { today: TODAY, overrideEntry: true });
+  assert.equal(r.status, 'WARN');
+  assert.ok(r.plan);
+  assert.ok(r.messages.some((m) => m.code === 'entry' && m.level === 'warn'));
+});

@@ -60,6 +60,7 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
       return `<section class="card"><h2>Create your plan</h2>
         <p class="muted">The plan uses the race, schedule and thresholds from Settings and the baseline from History. Save your settings first.</p>
         ${messagesHtml(state.messages)}
+        ${state.messages.some((m) => m.code === 'entry' && m.level === 'block') && state.messages.filter((m) => m.level === 'block').length === 1 ? '<p class="notice warn">Your recent training is below the usual starting point for this race. You can still build the plan, with a warning, if you accept the extra risk. <button type="button" data-act="generate-override">Generate anyway</button></p>' : ''}
         <p><button type="button" class="primary" data-act="generate" ${storage ? '' : 'disabled'}>Generate plan</button>
         <button type="button" class="link" data-go="settings">Open settings</button> <button type="button" class="link" data-go="history">Open history</button></p></section>`;
     }
@@ -184,7 +185,7 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
     el.innerHTML = `${bannersHtml()}${headerCard()}${state.plan ? suggestionsHtml() : ''}${state.plan ? state.plan.weeks.map(weekHtml).join('') : ''}`;
   }
 
-  async function generate({ keepPast = false } = {}) {
+  async function generate({ keepPast = false, override = false } = {}) {
     state.confirmRegen = false;
     state.confirmNew = false;
     state.notice = null;
@@ -197,7 +198,7 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
       r = regenerateFrom(state.plan, settings, history, { today, now });
     } else {
       const history = await getHistory();
-      r = generatePlan(settings, history, { today, id: 'main', now });
+      r = generatePlan(settings, history, { today, id: 'main', now, overrideEntry: override });
     }
     } catch (err) {
       console.error(err);
@@ -273,6 +274,7 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
       }
     }
     const act = b.dataset.act;
+    if (act === 'generate-override') { await refreshRuns(); return generate({ override: true }); }
     if (act === 'generate') { await refreshRuns(); return generate(); }
     if (act === 'regen') { state.confirmRegen = true; state.confirmNew = false; return render(); }
     if (act === 'regen-confirm') { await refreshRuns(); return generate({ keepPast: true }); }

@@ -14,7 +14,7 @@ const hm = (min) => `${Math.floor(min / 60)} h ${String(Math.round(min % 60)).pa
 /**
  * @returns {{status:'OK'|'WARN'|'BLOCK', messages:{level,code,text}[], params?:object}}
  */
-export function checkFeasibility(settings, history, { effectiveRuns, allowShort = false } = {}) {
+export function checkFeasibility(settings, history, { effectiveRuns, allowShort = false, overrideEntry = false } = {}) {
   const messages = [];
   const block = (code, text) => messages.push({ level: 'block', code, text });
   const warn = (code, text) => messages.push({ level: 'warn', code, text });
@@ -64,7 +64,7 @@ export function checkFeasibility(settings, history, { effectiveRuns, allowShort 
     if (cls.entry) {
       const [h, longH] = cls.entry;
       if ((history.baselineWeeklyHours ?? 0) < h || (history.longestRunMin ?? 0) < longH * 60) {
-        block('entry', `For a race of ${cls.label} you should already train about ${h} h a week with a longest run of ${longH} h. Build a base first or pick a shorter race.`);
+        (overrideEntry ? warn : block)('entry', `For a race of ${cls.label} you should already train about ${h} h a week with a longest run of ${longH} h. ${overrideEntry ? 'You chose to build the plan anyway, so progress carefully and cut back at any sign of injury.' : 'Build a base first or pick a shorter race.'}`);
       }
     }
     if (messages.some((m) => m.level === 'block')) return { status: 'BLOCK', messages, params };
@@ -105,7 +105,7 @@ export function checkFeasibility(settings, history, { effectiveRuns, allowShort 
       const [km, longKm] = t.entry;
       if (history.baselineWeeklyKm < km || history.longestRunKm < longKm) {
         const text = `For a ${t.label} you should already run ${km} km a week with a longest run of ${longKm} km. Build a base first or pick a shorter race.`;
-        if (t.entryBlock) block('entry', text); else warn('entry', text);
+        if (t.entryBlock && !overrideEntry) block('entry', text); else warn('entry', text);
       }
     }
     if (messages.some((m) => m.level === 'block')) return { status: 'BLOCK', messages, params };
