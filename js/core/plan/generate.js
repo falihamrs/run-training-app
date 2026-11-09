@@ -400,13 +400,23 @@ export function generatePlan(settingsIn, history, { today, id = 'main', now = nu
     steps: [], plannedMin: trail ? Math.round(params.TrMin) : Math.round(params.predictedSec / 60), plannedKm: race.distanceKm, plannedVertM: trail ? race.elevationGainM : 0, notes: [], locked: false,
   });
 
+  if (trail) {
+    const load = weeks.filter((w) => w.kind === 'load' && (w.phase === 'build' || w.phase === 'peak') && w.targetVertM);
+    const target = load.reduce((t, w) => t + w.targetVertM, 0);
+    const placed = load.reduce((t, w) => t + w.plannedVertM, 0);
+    if (target > 0 && placed / target < 0.85) {
+      messages.push({ level: 'warn', code: 'climbPlaced', text: `With ${v.effectiveRunsPerWeek} runs a week only about ${Math.round((100 * placed) / target)}% of the climbing target fits into your hills and incline days. Another run day, or more hills or incline days, would close the gap.` });
+    }
+  }
+  const finalStatus = messages.some((m) => m.level === 'warn') ? 'WARN' : 'OK';
+
   const plan = {
-    id, createdAt: now ?? null, mode: trail ? 'trail' : 'road', status: feas.status,
+    id, createdAt: now ?? null, mode: trail ? 'trail' : 'road', status: finalStatus,
     race: { ...race, kmEffort: trail ? params.effort : null, expectedDurationMin: trail ? params.TrRange : null, predictedSec: trail ? null : params.predictedSec },
     goalPaceSecPerKm: goalPace, easyPaceSecPerKm: easyPace, startDate: params.startMonday, raceDate,
     phases: vol.phases, peak: { km: vol.peakKm, hours: vol.peakHours, vertM: vol.peakVertM, longRunMin: params.peakLongMin ?? null, longRunKm: params.peakLong ?? null },
     settingsSnapshot: { runsPerWeek: v.effectiveRunsPerWeek, longRunDay: schedule.longRunDay, dayTerrain: terrain, unavailableDays: schedule.unavailableDays ?? [], experience: settings.athlete.experience },
     weeks,
   };
-  return { status: feas.status, messages, plan };
+  return { status: finalStatus, messages, plan };
 }
