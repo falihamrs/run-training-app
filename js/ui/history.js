@@ -169,5 +169,5 @@ export function mountHistory(el, { storage, getSettings, today, tzOffsetMin = -n
     }
   });
 
-  return { refresh: async () => { await reload(); render(); } };
+  return { refresh: async () => { await reload(); render(); }, getSummary: async () => { await reload(); return summary(); }, getRuns: () => state.runs };
 }

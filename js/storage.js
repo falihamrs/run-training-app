@@ -119,6 +119,20 @@ export async function saveSelfReport(db, value) {
   await db.settings.put({ key: 'selfReport', value, savedAt: new Date().toISOString() });
 }
 
+// ---------- plans (milestone 4) ----------
+
+export async function savePlan(db, plan) {
+  await db.plans.put({ ...plan, savedAt: new Date().toISOString() });
+}
+
+export async function loadPlan(db, id = 'main') {
+  return (await db.plans.get(id)) ?? null;
+}
+
+export async function deletePlan(db, id = 'main') {
+  await db.plans.delete(id);
+}
+
 export async function requestPersistence() {
   if (navigator.storage?.persist) return navigator.storage.persist();
   return false;
