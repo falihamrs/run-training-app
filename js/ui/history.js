@@ -6,13 +6,14 @@ import { formatDuration, formatPace, parsePace } from '../core/units.js';
 import { prescribedSnapshot } from '../core/targets.js';
 import { runsByWorkout, suggestMatch } from '../core/tracking.js';
 import { diffDays } from '../core/dates.js';
+import { formatBytes, integrityReport, runsInRange } from '../core/housekeeping.js';
 import { esc } from './util.js';
 
 const fmtKm = (v) => (v == null ? '–' : v.toFixed(1));
 const CONF = { high: 'High', medium: 'Medium', low: 'Low' };
 
 export function mountHistory(el, { storage, getSettings, today, tzOffsetMin = -new Date().getTimezoneOffset(), onUseThreshold, getPlan = () => null, getContext = () => null, onMatchChange = () => {} }) {
-  const state = { runs: [], selfReport: null, results: [], busy: false, acceptOther: false, error: null };
+  const state = { runs: [], selfReport: null, results: [], busy: false, acceptOther: false, error: null, hk: { from: '', to: '', keepRaces: true, confirm: false, report: null, usage: null, notice: null } };
 
   async function reload() {
     if (!storage) return;
@@ -111,11 +112,48 @@ export function mountHistory(el, { storage, getSettings, today, tzOffsetMin = -n
       <div class="scroll"><table class="list"><thead><tr><th>Date</th><th>km</th><th>Time</th><th>Pace</th><th>HR</th><th>Climb m</th><th>Terrain</th>${getPlan() ? '<th>Planned workout</th>' : ''}<th></th><th></th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
   }
 
+  function housekeepingCard() {
+    if (!storage) return '';
+    const hk = state.hk;
+    const u = hk.usage;
+    const matching = runsInRange(state.runs, hk.from, hk.to, { keepRaces: hk.keepRaces });
+    const usageLine = u
+      ? `${u.runs} run${u.runs === 1 ? '' : 's'} and ${u.streams} detailed run record${u.streams === 1 ? '' : 's'}, about ${formatBytes(u.runBytes + u.streamBytes + u.planBytes)} of your data${u.usage != null && u.quota ? `. The browser reports ${formatBytes(u.usage)} used of ${formatBytes(u.quota)} available for this site` : ''}.`
+      : 'Checking…';
+    const rep = hk.report;
+    const repHtml = rep ? (rep.fixable || rep.missingStreams.length
+      ? `<p class="notice warn">${rep.orphanStreams.length} leftover run record${rep.orphanStreams.length === 1 ? '' : 's'}, ${rep.danglingMatches.length} run${rep.danglingMatches.length === 1 ? '' : 's'} linked to a workout that no longer exists${rep.missingStreams.length ? `, ${rep.missingStreams.length} run${rep.missingStreams.length === 1 ? '' : 's'} without detailed data (fine, nothing to fix)` : ''}.
+        ${rep.fixable ? '<button type="button" class="primary" data-hk="fix">Clean up</button>' : ''}</p>`
+      : '<p class="notice ok">Everything is consistent. Nothing to clean up.</p>') : '';
+    return `<section class="card"><h2>Housekeeping</h2>
+      <p class="muted">${usageLine}</p>
+      ${hk.notice ? `<p class="notice ${hk.notice.kind === 'error' ? 'error' : 'ok'}">${esc(hk.notice.text)}</p>` : ''}
+      <h3>Delete old runs</h3>
+      <div class="grid">
+        <label class="field"><span class="lbl">From date</span><input type="date" data-hk-field="from" value="${esc(hk.from)}"></label>
+        <label class="field"><span class="lbl">To date</span><input type="date" data-hk-field="to" value="${esc(hk.to)}"></label>
+      </div>
+      <label class="inline"><input type="checkbox" data-hk-field="keepRaces" ${hk.keepRaces ? 'checked' : ''}> Keep runs marked as race</label>
+      <p class="muted">${hk.from || hk.to ? `${matching.length} run${matching.length === 1 ? '' : 's'} in this range.` : 'Pick a start date, an end date, or both.'} Deleting runs changes your history summary and threshold suggestions.</p>
+      ${hk.confirm && matching.length
+        ? `<p class="notice warn">Delete ${matching.length} run${matching.length === 1 ? '' : 's'} for good? <button type="button" class="primary" data-hk="delete-confirm">Yes, delete</button> <button type="button" data-hk="cancel">Cancel</button></p>`
+        : `<p><button type="button" data-hk="delete" ${matching.length ? '' : 'disabled'}>Delete these runs</button></p>`}
+      <h3>Check stored data</h3>
+      <p><button type="button" data-hk="check">Check and find leftovers</button></p>
+      ${repHtml}
+    </section>`;
+  }
+
+  async function refreshUsage() {
+    if (!storage?.storageUsage) return;
+    try { state.hk.usage = await storage.storageUsage(); } catch { state.hk.usage = null; }
+  }
+
   function render() {
     const h = summary();
     el.innerHTML = `${storage ? '' : '<p class="notice error">Storage is not available, so uploaded runs cannot be kept.</p>'}
       ${state.error ? `<p class="notice error">${esc(state.error)}</p>` : ''}
-      ${uploadCard()}${summaryCard(h)}${suggestionCard(h)}${state.runs.length ? '' : selfReportCard()}${runsCard()}`;
+      ${uploadCard()}${summaryCard(h)}${suggestionCard(h)}${state.runs.length ? '' : selfReportCard()}${runsCard()}${housekeepingCard()}`;
     el._summary = h;
   }
 
@@ -162,6 +200,7 @@ export function mountHistory(el, { storage, getSettings, today, tzOffsetMin = -n
     }
     state.busy = false;
     await reload();
+    await refreshUsage();
     render();
   }
 
@@ -169,6 +208,13 @@ export function mountHistory(el, { storage, getSettings, today, tzOffsetMin = -n
     const t = e.target;
     if (t.id === 'hist-files' && t.files?.length) return importFiles([...t.files]);
     if (t.dataset.opt === 'acceptOther') { state.acceptOther = t.checked; return; }
+    if (t.dataset.hkField) {
+      const k = t.dataset.hkField;
+      state.hk[k] = k === 'keepRaces' ? t.checked : t.value;
+      state.hk.confirm = false;
+      state.hk.notice = null;
+      return render();
+    }
     if (t.dataset.match !== undefined) {
       const id = Number(t.dataset.match);
       const wid = t.value || null;
@@ -193,11 +239,43 @@ export function mountHistory(el, { storage, getSettings, today, tzOffsetMin = -n
   });
 
   el.addEventListener('click', async (e) => {
-    const b = e.target.closest('[data-del],[data-act]');
+    const b = e.target.closest('[data-del],[data-act],[data-hk]');
     if (!b) return;
+    if (b.dataset.hk) {
+      const hk = state.hk;
+      if (b.dataset.hk === 'delete') { hk.confirm = true; hk.notice = null; return render(); }
+      if (b.dataset.hk === 'cancel') { hk.confirm = false; return render(); }
+      if (b.dataset.hk === 'delete-confirm') {
+        const ids = runsInRange(state.runs, hk.from, hk.to, { keepRaces: hk.keepRaces }).map((r) => r.id);
+        await storage.deleteRuns(ids);
+        hk.confirm = false;
+        hk.notice = { kind: 'ok', text: `${ids.length} run${ids.length === 1 ? '' : 's'} deleted.` };
+        hk.report = null;
+        await reload(); await refreshUsage(); render(); onMatchChange();
+        return;
+      }
+      if (b.dataset.hk === 'check' || b.dataset.hk === 'fix') {
+        const streamIds = await storage.listStreamIds();
+        let rep = integrityReport({ runs: state.runs, streamIds, plan: getPlan() });
+        if (b.dataset.hk === 'fix') {
+          if (rep.orphanStreams.length) await storage.deleteStreams(rep.orphanStreams);
+          for (const id of rep.danglingMatches) await storage.updateRun(id, { matchedWorkoutId: null });
+          hk.notice = { kind: 'ok', text: `Cleaned up ${rep.fixable} item${rep.fixable === 1 ? '' : 's'}.` };
+          await reload();
+          rep = integrityReport({ runs: state.runs, streamIds: await storage.listStreamIds(), plan: getPlan() });
+          onMatchChange();
+        } else hk.notice = null;
+        hk.report = rep;
+        await refreshUsage();
+        render();
+        return;
+      }
+      return;
+    }
     if (b.dataset.del) {
       await storage.deleteRun(Number(b.dataset.del));
       await reload();
+      await refreshUsage();
       render();
     } else if (b.dataset.act === 'use-threshold') {
       const h = el._summary;
@@ -205,5 +283,5 @@ export function mountHistory(el, { storage, getSettings, today, tzOffsetMin = -n
     }
   });
 
-  return { refresh: async () => { await reload(); render(); }, getSummary: async (opts) => { await reload(); return summary(opts); }, getRuns: () => state.runs };
+  return { refresh: async () => { await reload(); await refreshUsage(); render(); }, getSummary: async (opts) => { await reload(); return summary(opts); }, getRuns: () => state.runs };
 }

@@ -1,6 +1,6 @@
 import { todayLocal } from './core/dates.js';
 import { defaultSettings } from './core/defaults.js';
-import { addRun, deletePlan, eraseAll, loadMeta, markExported, validateBackup, deleteRun, loadPlan, loadSuggestState, savePlan, saveSuggestState, exportBackup, importBackup, isPersisted, listRuns, loadSelfReport, loadSettings, openDb, requestPersistence, saveSelfReport, saveSettings, updateRun } from './storage.js';
+import { addRun, deletePlan, deleteRuns, deleteStreams, listStreamIds, storageUsage, eraseAll, loadMeta, markExported, validateBackup, deleteRun, loadPlan, loadSuggestState, savePlan, saveSuggestState, exportBackup, importBackup, isPersisted, listRuns, loadSelfReport, loadSettings, openDb, requestPersistence, saveSelfReport, saveSettings, updateRun } from './storage.js';
 import { mountHistory } from './ui/history.js';
 import { mountPlan } from './ui/plan.js';
 import { mountSettings } from './ui/settings.js';
@@ -35,6 +35,10 @@ async function start() {
       listRuns: () => listRuns(db),
       updateRun: (id, changes) => updateRun(db, id, changes),
       deleteRun: (id) => deleteRun(db, id),
+      deleteRuns: (ids) => deleteRuns(db, ids),
+      deleteStreams: (ids) => deleteStreams(db, ids),
+      listStreamIds: () => listStreamIds(db),
+      storageUsage: () => storageUsage(db),
       loadSelfReport: () => loadSelfReport(db),
       saveSelfReport: (v) => saveSelfReport(db, v),
       savePlan: (p) => savePlan(db, p),

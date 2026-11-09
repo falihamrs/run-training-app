@@ -141,6 +141,30 @@ export async function deleteRun(db, id) {
   });
 }
 
+export async function listStreamIds(db) {
+  return db.streams.toCollection().primaryKeys();
+}
+
+export async function deleteRuns(db, ids) {
+  await db.transaction('rw', db.runs, db.streams, async () => {
+    await db.runs.bulkDelete(ids);
+    await db.streams.bulkDelete(ids);
+  });
+}
+
+export async function deleteStreams(db, runIds) {
+  await db.streams.bulkDelete(runIds);
+}
+
+/** Rough size of what this app stores, plus the browser's own estimate when it offers one. */
+export async function storageUsage(db) {
+  const [runs, streams, plans] = await Promise.all([db.runs.toArray(), db.streams.toArray(), db.plans.toArray()]);
+  const size = (v) => JSON.stringify(v).length;
+  let browser = null;
+  try { browser = (await navigator.storage?.estimate?.()) ?? null; } catch { /* not available */ }
+  return { runs: runs.length, streams: streams.length, runBytes: size(runs), streamBytes: size(streams), planBytes: size(plans), usage: browser?.usage ?? null, quota: browser?.quota ?? null };
+}
+
 export async function loadSelfReport(db) {
   return (await db.settings.get('selfReport'))?.value ?? null;
 }
