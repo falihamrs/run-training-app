@@ -213,6 +213,12 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
       render();
       return;
     }
+    // Workout ids are only week number and weekday, so a replaced plan would silently inherit the old
+    // matches. Unlink them (the prescribed snapshot on each run stays as the record).
+    if (!keepPast && storage && state.plan) {
+      for (const run of state.runs) if (run.matchedWorkoutId) await storage.updateRun(run.id, { matchedWorkoutId: null });
+      state.runs = await storage.listRuns();
+    }
     state.plan = r.plan;
     if (storage) {
       try { await storage.savePlan(r.plan); state.notice = { kind: 'ok', text: 'Plan saved in this browser.' }; }
