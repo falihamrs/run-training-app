@@ -244,19 +244,26 @@ export function generatePlan(settingsIn, history, { today, id = 'main', now = nu
 
     // fit the week: shrink quality sessions, drop a small easy run, and spread any slack in back-to-back weeks
     if (trail && !isRaceWeek) {
-      const MIN_EASY = 20;
-      const qSlots = ['Q1', 'Q2'].filter((k) => quality[k]?.steps);
+      const MIN_EASY = 24; // 20 min plus strides
+      const qSlots = () => ['Q1', 'Q2'].filter((k) => quality[k]?.steps);
       const easyList = () => WEEKDAYS.filter((d) => assign[d] === 'E' || assign[d] === 'R');
       const fixed = () => longMin + medMin;
-      while (Object.keys(assign).length > 3 && easyList().length && fixed() + qSlots.length * 30 + easyList().length * MIN_EASY > 1.1 * weekMin) {
+      const need = () => fixed() + qSlots().length * 30 + easyList().length * MIN_EASY;
+      while (Object.keys(assign).length > 2 && need() > 1.1 * weekMin) {
         const list = easyList();
-        const d = list.filter((x) => assign[x] === 'R').pop() ?? list[list.length - 1];
-        delete assign[d];
+        if (list.length) {
+          const d = list.filter((x) => assign[x] === 'R').pop() ?? list[list.length - 1];
+          delete assign[d];
+        } else if (quality.Q2 && q2Day && assign[q2Day] === 'Q2') {
+          delete assign[q2Day];
+          quality.Q2 = null;
+          q2Min = 0;
+        } else break;
         if (!flags.some((f) => f.startsWith('A run was dropped'))) flags.push('A run was dropped because the weekly time is too small for this many runs.');
       }
-      if (qSlots.length) {
-        const per = Math.max(20, Math.floor((weekMin - fixed() - easyList().length * MIN_EASY) / qSlots.length));
-        for (const k of qSlots) if (W.totalMinutes(quality[k].steps) > per) quality[k].steps = W.fitSteps(quality[k].steps, per);
+      if (qSlots().length) {
+        const per = Math.max(20, Math.floor((weekMin - fixed() - easyList().length * MIN_EASY) / qSlots().length));
+        for (const k of qSlots()) if (W.totalMinutes(quality[k].steps) > per) quality[k].steps = W.fitSteps(quality[k].steps, per);
         q1Min = qMin('Q1');
         q2Min = qMin('Q2');
       }

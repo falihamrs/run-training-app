@@ -202,3 +202,10 @@ test('no hills or incline day: advice is to set terrain, not to add runs', () =>
   assert.ok(r.messages.some((m) => m.code === 'noClimbDays'));
   assert.ok(!r.messages.some((m) => m.code === 'runsTooFew'));
 });
+
+test('very low baseline: early weeks stay near the time target by using fewer runs', () => {
+  const r = gen({ ...trailOpts, distanceKm: 25, gain: 2300, runs: 4, weeks: 32 }, { baselineWeeklyHours: 1.1, longestRunMin: 80, baselineWeeklyVertM: 40 });
+  const first = r.plan.weeks[0];
+  assert.ok(first.plannedMin <= first.targetHours * 60 * 1.1 + 1, `${first.plannedMin} vs ${first.targetHours * 60}`);
+  assert.ok(first.workouts.filter((w) => w.role !== 'S').length >= 2);
+});
