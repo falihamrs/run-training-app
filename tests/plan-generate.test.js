@@ -195,3 +195,10 @@ test('trail weeks stay close to their time target and race week keeps the run co
   assert.ok(last.workouts.filter((x) => x.role !== 'S' && x.role !== 'RACE').length <= 4);
   assert.equal(last.plannedMin, last.workouts.filter((x) => x.role !== 'S' && x.role !== 'RACE').reduce((s, x) => s + x.plannedMin, 0));
 });
+
+test('no hills or incline day: advice is to set terrain, not to add runs', () => {
+  const flat = Object.fromEntries(WEEKDAYS.map((d) => [d, 'flat']));
+  const r = gen({ ...trailOpts, distanceKm: 25, gain: 2300, runs: 4, weeks: 24, terrain: flat }, { baselineWeeklyHours: 4, longestRunMin: 120, baselineWeeklyVertM: 400 });
+  assert.ok(r.messages.some((m) => m.code === 'noClimbDays'));
+  assert.ok(!r.messages.some((m) => m.code === 'runsTooFew'));
+});

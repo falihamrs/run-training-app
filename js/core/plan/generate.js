@@ -462,7 +462,10 @@ export function generatePlan(settingsIn, history, { today, id = 'main', now = nu
   });
 
   const coverage = coverageOf(weeks, trail);
-  if (!noRunAdvice && coverage.worst < COVERAGE_MIN) {
+  const climbDays = available.filter((d) => terrain[d] === 'hills' || terrain[d] === 'incline');
+  if (!noRunAdvice && trail && coverage.worst < COVERAGE_MIN && climbDays.length === 0) {
+    messages.push({ level: 'warn', code: 'noClimbDays', recommendedRuns: null, text: `None of your available days is set to hills or incline, so only ${Math.round(coverage.worst * 100)}% of the climbing target can be placed. More runs will not fix this. Set at least one weekday to incline or hills in Settings, Schedule.` });
+  } else if (!noRunAdvice && coverage.worst < COVERAGE_MIN) {
     const maxRuns = Math.min(7, available.length);
     let better = null;
     for (let r = v.effectiveRunsPerWeek + 1; r <= maxRuns && !better; r++) {
