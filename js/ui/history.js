@@ -3,12 +3,15 @@ import { parseActivityFile } from '../core/tcx.js';
 import { analyzeActivity } from '../core/analyze.js';
 import { analyzeHistory } from '../core/history.js';
 import { formatDuration, formatPace, parsePace } from '../core/units.js';
+import { prescribedSnapshot } from '../core/targets.js';
+import { runsByWorkout, suggestMatch } from '../core/tracking.js';
+import { diffDays } from '../core/dates.js';
 import { esc } from './util.js';
 
 const fmtKm = (v) => (v == null ? '–' : v.toFixed(1));
 const CONF = { high: 'High', medium: 'Medium', low: 'Low' };
 
-export function mountHistory(el, { storage, getSettings, today, tzOffsetMin = -new Date().getTimezoneOffset(), onUseThreshold }) {
+export function mountHistory(el, { storage, getSettings, today, tzOffsetMin = -new Date().getTimezoneOffset(), onUseThreshold, getPlan = () => null, getContext = () => null, onMatchChange = () => {} }) {
   const state = { runs: [], selfReport: null, results: [], busy: false, acceptOther: false, error: null };
 
   async function reload() {
@@ -17,10 +20,19 @@ export function mountHistory(el, { storage, getSettings, today, tzOffsetMin = -n
     state.selfReport = await storage.loadSelfReport();
   }
 
-  function summary() {
+  function matchOptions(r) {
+    const plan = getPlan();
+    if (!plan) return '';
+    const used = new Map([...runsByWorkout(state.runs)].map(([k, v]) => [k, v.id]));
+    const opts = plan.weeks.flatMap((w) => w.workouts).filter((w) => w.role !== 'S' && Math.abs(diffDays(w.date, r.date)) <= 3)
+      .map((w) => `<option value="${esc(w.id)}" ${r.matchedWorkoutId === w.id ? 'selected' : ''}>${esc(w.date.slice(5))} ${esc(w.code)}${used.has(w.id) && used.get(w.id) !== r.id ? ' (taken)' : ''}</option>`).join('');
+    return `<select data-match="${r.id}" aria-label="Planned workout"><option value="">not matched</option>${opts}</select>`;
+  }
+
+  function summary(opts = {}) {
     const s = getSettings();
     const lthr = [...(s.thresholds || [])].sort((a, b) => b.effectiveFrom.localeCompare(a.effectiveFrom)).find((t) => t.lthr)?.lthr ?? null;
-    return analyzeHistory(state.runs, { planStart: s.schedule.startDate, asOf: today, lthr, selfReport: state.selfReport, mode: s.race.mode, tzOffsetMin });
+    return analyzeHistory(state.runs, { planStart: opts.planStart ?? s.schedule.startDate, asOf: today, lthr, selfReport: state.selfReport, mode: s.race.mode, tzOffsetMin });
   }
 
   function uploadCard() {
@@ -92,11 +104,11 @@ export function mountHistory(el, { storage, getSettings, today, tzOffsetMin = -n
     if (!state.runs.length) return '';
     const rows = [...state.runs].reverse().map((r) => `<tr>
       <td>${esc(r.date)}</td><td>${r.distanceKm.toFixed(1)}</td><td>${formatDuration(r.movingSec)}</td>
-      <td>${formatPace(r.avgPaceSecPerKm)}</td><td>${r.avgHr ? Math.round(r.avgHr) : '–'}</td><td>${Math.round(r.gainM)}</td><td>${esc(r.terrain)}</td>
+      <td>${formatPace(r.avgPaceSecPerKm)}</td><td>${r.avgHr ? Math.round(r.avgHr) : '–'}</td><td>${Math.round(r.gainM)}</td><td>${esc(r.terrain)}</td>${getPlan() ? `<td>${matchOptions(r)}</td>` : ''}
       <td><label class="inline"><input type="checkbox" data-race="${r.id}" ${r.race ? 'checked' : ''}> race</label></td>
       <td><button type="button" class="link" data-del="${r.id}">Delete</button></td></tr>`).join('');
     return `<section class="card"><h2>Activities (${state.runs.length})</h2>
-      <div class="scroll"><table class="list"><thead><tr><th>Date</th><th>km</th><th>Time</th><th>Pace</th><th>HR</th><th>Climb m</th><th>Terrain</th><th></th><th></th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
+      <div class="scroll"><table class="list"><thead><tr><th>Date</th><th>km</th><th>Time</th><th>Pace</th><th>HR</th><th>Climb m</th><th>Terrain</th>${getPlan() ? '<th>Planned workout</th>' : ''}<th></th><th></th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
   }
 
   function render() {
@@ -111,10 +123,12 @@ export function mountHistory(el, { storage, getSettings, today, tzOffsetMin = -n
     state.busy = true;
     state.results = [];
     render();
+    await reload();
+    const taken = new Set(runsByWorkout(state.runs).keys());
     for (const file of files) {
       try {
         const acts = parseActivityFile(await file.text(), file.name);
-        let added = 0, skipped = 0, rejected = [];
+        let added = 0, skipped = 0, matched = 0, rejected = [];
         for (const act of acts) {
           const sport = String(act.sport).toLowerCase();
           const isRun = /run|trail/.test(sport) || (state.acceptOther && (sport === 'other' || sport === 'unknown'));
@@ -123,10 +137,21 @@ export function mountHistory(el, { storage, getSettings, today, tzOffsetMin = -n
           const r = analyzeActivity(act, { tzOffsetMin, fileName: file.name });
           if (!r.ok) { rejected.push(r.error); continue; }
           const res = await storage.addRun(r.run, r.stream);
-          if (res.added) added++; else skipped++;
+          if (res.added) {
+            added++;
+            const plan = getPlan();
+            const wid = plan ? suggestMatch(plan, r.run, taken) : null;
+            if (wid) {
+              const workout = plan.weeks.flatMap((w) => w.workouts).find((w) => w.id === wid);
+              taken.add(wid);
+              await storage.updateRun(res.id, { matchedWorkoutId: wid, prescribedSnapshot: prescribedSnapshot(workout, getContext()) });
+              matched++;
+            }
+          } else skipped++;
         }
         const parts = [];
         if (added) parts.push(`${added} run${added > 1 ? 's' : ''} added`);
+        if (matched) parts.push(`${matched} matched to the plan`);
         if (skipped) parts.push('already in your history');
         if (rejected.length) parts.push(`skipped (${rejected.join(', ')})`);
         state.results.push({ name: file.name, ok: added > 0 || skipped > 0, message: parts.join('; ') || 'nothing to add' });
@@ -143,6 +168,16 @@ export function mountHistory(el, { storage, getSettings, today, tzOffsetMin = -n
     const t = e.target;
     if (t.id === 'hist-files' && t.files?.length) return importFiles([...t.files]);
     if (t.dataset.opt === 'acceptOther') { state.acceptOther = t.checked; return; }
+    if (t.dataset.match !== undefined) {
+      const id = Number(t.dataset.match);
+      const wid = t.value || null;
+      const plan = getPlan();
+      for (const other of state.runs) if (wid && other.matchedWorkoutId === wid && other.id !== id) await storage.updateRun(other.id, { matchedWorkoutId: null, prescribedSnapshot: null });
+      const workout = wid ? plan.weeks.flatMap((w) => w.workouts).find((w) => w.id === wid) : null;
+      await storage.updateRun(id, { matchedWorkoutId: wid, prescribedSnapshot: workout ? prescribedSnapshot(workout, getContext()) : null });
+      await reload(); render(); onMatchChange();
+      return;
+    }
     if (t.dataset.race) { await storage.updateRun(Number(t.dataset.race), { race: t.checked }); await reload(); render(); return; }
     if (t.dataset.sr) {
       const sr = { ...(state.selfReport || {}) };
@@ -169,5 +204,5 @@ export function mountHistory(el, { storage, getSettings, today, tzOffsetMin = -n
     }
   });
 
-  return { refresh: async () => { await reload(); render(); }, getSummary: async () => { await reload(); return summary(); }, getRuns: () => state.runs };
+  return { refresh: async () => { await reload(); render(); }, getSummary: async (opts) => { await reload(); return summary(opts); }, getRuns: () => state.runs };
 }

@@ -43,18 +43,25 @@ async function start() {
       <nav class="pages" id="pages"><button type="button" data-page="plan">Plan</button><button type="button" data-page="history">History</button><button type="button" data-page="settings">Settings</button></nav></header>
     <div id="page-plan" hidden></div><div id="page-history" hidden></div><div id="page-settings"></div>`;
   const pageEls = { plan: root.querySelector('#page-plan'), history: root.querySelector('#page-history'), settings: root.querySelector('#page-settings') };
+  let planUi = { getPlan: () => null };
   const settingsUi = mountSettings(pageEls.settings, { storage, settings, savedAt, today, storageProblem });
   const historyUi = mountHistory(pageEls.history, {
     storage,
     getSettings: () => settingsUi.currentSettings(),
     today,
+    getPlan: () => planUi.getPlan(),
+    getContext: () => {
+      const st = settingsUi.currentSettings();
+      const pl = planUi.getPlan();
+      return { thresholds: st.thresholds, coros: st.corosZones, mode: pl?.mode ?? st.race.mode, goalPaceSecPerKm: pl?.goalPaceSecPerKm ?? null };
+    },
     onUseThreshold: (suggestion) => { settingsUi.prefillThreshold(suggestion); show('settings'); },
   });
-  const planUi = mountPlan(pageEls.plan, {
+  planUi = mountPlan(pageEls.plan, {
     storage,
     today,
     getSettings: () => settingsUi.currentSettings(),
-    getHistory: () => historyUi.getSummary(),
+    getHistory: (opts) => historyUi.getSummary(opts),
     goto: (p) => show(p),
   });
   function show(page) {

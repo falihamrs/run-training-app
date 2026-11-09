@@ -10,13 +10,13 @@ import * as W from './workouts.js';
 const round05 = (x) => Math.round(x * 2) / 2;
 const hasClimbSteps = (code) => ['CLB', 'HIL', 'HIKE', 'DWN', 'INC'].includes(code);
 
-export function generatePlan(settingsIn, history, { today, id = 'main', now = null } = {}) {
+export function generatePlan(settingsIn, history, { today, id = 'main', now = null, allowShort = false } = {}) {
   const v = validateSettings(settingsIn, { today });
   if (v.errors.length) {
     return { status: 'BLOCK', messages: v.errors.map((e) => ({ level: 'block', code: 'input', text: e.message })), plan: null };
   }
   const settings = v.normalized;
-  const feas = checkFeasibility(settings, history, { effectiveRuns: v.effectiveRunsPerWeek });
+  const feas = checkFeasibility(settings, history, { effectiveRuns: v.effectiveRunsPerWeek, allowShort });
   if (feas.status === 'BLOCK') return { status: 'BLOCK', messages: feas.messages, plan: null };
 
   const { params } = feas;
@@ -356,7 +356,7 @@ export function generatePlan(settingsIn, history, { today, id = 'main', now = nu
         if (chosen.length >= sPlanned) break;
         if (chosen.every((c) => Math.abs(WEEKDAYS.indexOf(c) - WEEKDAYS.indexOf(d)) >= 2) && !(race.date === addDays(start, WEEKDAYS.indexOf(d)))) chosen.push(d);
       }
-      if (chosen.length < sPlanned) flags.push(`Only ${chosen.length} of ${sPlanned} strength sessions fit without sitting before a hard day.`);
+      if (chosen.length === 0) flags.push('No strength session fits this week without sitting before a hard day.');
       for (const d of chosen) {
         const steps = W.strengthSteps();
         workouts.push({

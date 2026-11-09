@@ -2,7 +2,8 @@
 import { generatePlan } from '../core/plan/generate.js';
 import { planCsv, stepLines, weekText, workoutText } from '../core/export.js';
 import { resolveTargets } from '../core/targets.js';
-import { WEEKDAYS, diffDays } from '../core/dates.js';
+import { WEEKDAYS, diffDays, nextMonday } from '../core/dates.js';
+import { compareRun, planAdvice, regenerateFrom, runsByWorkout, weekProgress, workoutStatus } from '../core/tracking.js';
 import { formatDuration } from '../core/units.js';
 import { esc } from './util.js';
 
@@ -28,7 +29,7 @@ async function copyText(text) {
 }
 
 export function mountPlan(el, { storage, today, getSettings, getHistory, goto }) {
-  const state = { plan: null, messages: [], loaded: false, notice: null, confirmRegen: false, open: new Set() };
+  const state = { plan: null, messages: [], loaded: false, notice: null, confirmRegen: false, confirmNew: false, open: new Set(), runs: [] };
 
   const ctx = () => {
     const s = getSettings();
@@ -63,9 +64,19 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto })
         <button type="button" data-act="csv">Download CSV</button>
         <button type="button" data-act="copy-plan">Copy all weeks as text</button>
         ${state.confirmRegen
-          ? '<span class="notice warn">Replace the current plan? <button type="button" class="primary" data-act="generate">Yes, regenerate</button> <button type="button" data-act="cancel-regen">Cancel</button></span>'
-          : '<button type="button" data-act="regen">Regenerate</button>'}
-      </p></section>`;
+          ? `<span class="notice warn">Regenerate from ${esc(nextMonday(today))}? Weeks before that stay as they are. <button type="button" class="primary" data-act="regen-confirm">Yes, regenerate</button> <button type="button" data-act="cancel-regen">Cancel</button></span>`
+          : '<button type="button" data-act="regen">Regenerate from next Monday</button>'}
+        ${state.confirmNew
+          ? '<span class="notice warn">Discard this plan and start a new one? Matched runs keep their record. <button type="button" class="primary" data-act="generate">Yes, start over</button> <button type="button" data-act="cancel-regen">Cancel</button></span>'
+          : '<button type="button" data-act="new">Start a new plan</button>'}
+      </p>
+      ${adviceHtml()}</section>`;
+  }
+
+  function adviceHtml() {
+    const adv = planAdvice(state.plan, state.runs, today);
+    if (!adv.length) return '';
+    return adv.map((a) => `<p class="notice warn">${esc(a.text)} <button type="button" data-act="regen">Regenerate from next Monday</button></p>`).join('');
   }
 
   function stepsHtml(w) {
@@ -75,26 +86,35 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto })
   }
 
   function workoutHtml(w, week) {
+    const byWorkout = runsByWorkout(state.runs);
+    const run = byWorkout.get(w.id) ?? null;
+    const status = w.code === 'RACE' && !run && w.date >= today ? 'upcoming' : workoutStatus(w, run, today);
+    const statusTag = { done: '<span class="tag">done</span>', missed: '<span class="tag coros">missed</span>', today: '<span class="tag">today</span>' }[status] ?? '';
+    const cmp = run ? compareRun(w, run) : null;
+    const actual = run ? `<p class="small ok">Done: ${run.distanceKm.toFixed(1)} km in ${Math.round(run.movingSec / 60)} min${run.gainM ? `, ${Math.round(run.gainM)} m climbing` : ''}${cmp.avgHr ? `, average HR ${cmp.avgHr}` : ''} (${cmp.minDiff >= 0 ? '+' : ''}${cmp.minDiff} min vs plan${cmp.vertDiff != null ? `, ${cmp.vertDiff >= 0 ? '+' : ''}${cmp.vertDiff} m` : ''}).${run.prescribedSnapshot?.thresholdEffectiveFrom ? ` Prescribed with the thresholds from ${esc(run.prescribedSnapshot.thresholdEffectiveFrom)}.` : ''}</p>` : '';
     const climb = w.plannedVertM ? ` · ${w.plannedVertM} m` : '';
     const km = w.plannedKm && w.code !== 'RACE' && state.plan.mode === 'road' ? ` · ~${w.plannedKm} km` : '';
     const date = new Date(w.date + 'T00:00:00Z');
     const body = w.code === 'RACE' ? '<p>Good luck. Race fuelling and gear as practised.</p>' : `${stepsHtml(w)}${(w.notes ?? []).map((n) => `<p class="muted small">${esc(n)}</p>`).join('')}`;
     return `<article class="workout role-${esc(w.role)}${w.date === today ? ' today' : ''}">
       <header><strong>${esc(w.weekday)} ${date.getUTCDate()}/${date.getUTCMonth() + 1}</strong> <span class="code">${esc(w.code)}</span> ${esc(w.name)}
-        <span class="muted small">${w.plannedMin} min${km}${climb}</span>
+        <span class="muted small">${w.plannedMin} min${km}${climb}</span> ${statusTag}
         <button type="button" class="link" data-copy-workout="${esc(w.id)}">Copy</button></header>
-      ${body}</article>`;
+      ${body}${actual}</article>`;
   }
 
   function weekHtml(week) {
     const trail = state.plan.mode === 'trail';
     const target = trail ? `${week.targetHours} h · ${week.targetVertM} m` : `${week.targetKm} km`;
     const planned = trail ? `${(week.plannedMin / 60).toFixed(1)} h · ${week.plannedVertM} m` : `${week.plannedKm} km`;
+    const prog = weekProgress(week, state.runs, today, state.plan.mode);
+    const done = trail ? `${(prog.actualMin / 60).toFixed(1)} h · ${Math.round(prog.actualVertM)} m` : `${prog.actualKm.toFixed(1)} km`;
+    const progTxt = prog.runs || prog.complete ? ` · done ${done}${prog.ratio != null ? ` (${Math.round(prog.ratio * 100)}%)` : ''}` : '';
     const isCurrent = diffDays(week.start, today) >= 0 && diffDays(week.start, today) < 7;
     const anyCurrent = state.plan.weeks.some((x) => diffDays(x.start, today) >= 0 && diffDays(x.start, today) < 7);
     const open = state.open.has(week.n) || ((isCurrent || (!anyCurrent && week.n === 1)) && !state.open.has(-week.n));
     return `<details class="week${isCurrent ? ' current' : ''}" data-week="${week.n}" ${open ? 'open' : ''}>
-      <summary><strong>Week ${week.n}</strong> · ${esc(week.start)} · ${PHASE_LABEL[week.phase]}${week.kind === 'down' ? ' (down week)' : ''} · target ${target} · planned ${planned}${isCurrent ? ' <span class="tag">this week</span>' : ''}</summary>
+      <summary><strong>Week ${week.n}</strong> · ${esc(week.start)} · ${PHASE_LABEL[week.phase]}${week.kind === 'down' ? ' (down week)' : ''} · target ${target} · planned ${planned}${progTxt}${week.locked ? ' · locked' : ''}${isCurrent ? ' <span class="tag">this week</span>' : ''}</summary>
       <p class="muted small">${esc(week.reason)}</p>
       ${week.flags.map((f) => `<p class="notice warn small">${esc(f)}</p>`).join('')}
       <p><button type="button" class="link" data-copy-week="${week.n}">Copy this week as text</button></p>
@@ -106,15 +126,24 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto })
     el.innerHTML = `${headerCard()}${state.plan ? state.plan.weeks.map(weekHtml).join('') : ''}`;
   }
 
-  async function generate() {
+  async function generate({ keepPast = false } = {}) {
     state.confirmRegen = false;
+    state.confirmNew = false;
     state.notice = null;
     const settings = getSettings();
-    const history = await getHistory();
-    const r = generatePlan(settings, history, { today, id: 'main', now: new Date().toISOString() });
+    const now = new Date().toISOString();
+    let r;
+    if (keepPast && state.plan) {
+      const history = await getHistory({ planStart: nextMonday(today) });
+      r = regenerateFrom(state.plan, settings, history, { today, now });
+    } else {
+      const history = await getHistory();
+      r = generatePlan(settings, history, { today, id: 'main', now });
+    }
     state.messages = r.messages;
     if (!r.plan) {
-      state.plan = null;
+      if (!keepPast) state.plan = null;
+      else state.notice = { kind: 'error', text: 'The plan could not be regenerated. See the messages above; your current plan is unchanged.' };
       render();
       return;
     }
@@ -131,6 +160,7 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto })
       state.plan = await storage.loadPlan();
       state.loaded = true;
     }
+    if (storage) state.runs = await storage.listRuns();
     render();
   }
 
@@ -158,9 +188,11 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto })
     if (!b) return;
     if (b.dataset.go) return goto(b.dataset.go);
     const act = b.dataset.act;
-    if (act === 'generate') return generate();
-    if (act === 'regen') { state.confirmRegen = true; return render(); }
-    if (act === 'cancel-regen') { state.confirmRegen = false; return render(); }
+    if (act === 'generate') { await refreshRuns(); return generate(); }
+    if (act === 'regen') { state.confirmRegen = true; state.confirmNew = false; return render(); }
+    if (act === 'regen-confirm') { await refreshRuns(); return generate({ keepPast: true }); }
+    if (act === 'new') { state.confirmNew = true; state.confirmRegen = false; return render(); }
+    if (act === 'cancel-regen') { state.confirmRegen = false; state.confirmNew = false; return render(); }
     if (act === 'csv') {
       const blob = new Blob([planCsv(state.plan, ctx())], { type: 'text/csv' });
       const a = document.createElement('a');
@@ -181,5 +213,9 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto })
     }
   });
 
-  return { refresh };
+  async function refreshRuns() { if (storage) state.runs = await storage.listRuns(); }
+
+  if (storage) storage.loadPlan().then((p) => { state.plan = p; state.loaded = true; if (p) render(); }).catch(() => {});
+
+  return { refresh, getPlan: () => state.plan };
 }

@@ -14,7 +14,7 @@ const hm = (min) => `${Math.floor(min / 60)} h ${String(Math.round(min % 60)).pa
 /**
  * @returns {{status:'OK'|'WARN'|'BLOCK', messages:{level,code,text}[], params?:object}}
  */
-export function checkFeasibility(settings, history, { effectiveRuns } = {}) {
+export function checkFeasibility(settings, history, { effectiveRuns, allowShort = false } = {}) {
   const messages = [];
   const block = (code, text) => messages.push({ level: 'block', code, text });
   const warn = (code, text) => messages.push({ level: 'warn', code, text });
@@ -60,7 +60,7 @@ export function checkFeasibility(settings, history, { effectiveRuns } = {}) {
     const taperWeeks = effort >= 25 ? 2 : 1;
     Object.assign(params, { effort, cls, TrMin, TrRange, peakHours, peakVert, peakLongMin, taperWeeks, minPerEffort });
 
-    if (W < cls.block) block('weeks', `Only ${W} weeks until the race. A race of ${cls.label} needs at least ${cls.block} weeks.`);
+    if (W < cls.block) (allowShort ? warn : block)('weeks', `Only ${W} weeks until the race. A race of ${cls.label} needs at least ${cls.block} weeks.`);
     if (cls.entry) {
       const [h, longH] = cls.entry;
       if ((history.baselineWeeklyHours ?? 0) < h || (history.longestRunMin ?? 0) < longH * 60) {
@@ -100,7 +100,7 @@ export function checkFeasibility(settings, history, { effectiveRuns } = {}) {
     const taperWeeks = t.taper.length;
     Object.assign(params, { cat, table: t, predictedSec: predicted, peakKm, peakLong, taperWeeks });
 
-    if (W < t.block) block('weeks', `Only ${W} weeks until the race. A ${t.label} needs at least ${t.block} weeks.`);
+    if (W < t.block) (allowShort ? warn : block)('weeks', `Only ${W} weeks until the race. A ${t.label} needs at least ${t.block} weeks.`);
     if (t.entry) {
       const [km, longKm] = t.entry;
       if (history.baselineWeeklyKm < km || history.longestRunKm < longKm) {
