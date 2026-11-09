@@ -15,8 +15,8 @@ The full design is in the spec document ("Run Training Plan Generator: Detailed 
 | 3. Plan generator and tests | Done |
 | 4. Plan view and export (text, CSV) | Done |
 | 5. Tracking: planned vs. actual | Done |
-| 6. Threshold update suggestions | Next |
-| 7. Backup and polish | |
+| 6. Threshold update suggestions | Done |
+| 7. Backup and polish | Next |
 
 ## Run it
 

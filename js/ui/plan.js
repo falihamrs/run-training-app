@@ -5,6 +5,7 @@ import { resolveTargets } from '../core/targets.js';
 import { WEEKDAYS, diffDays, nextMonday } from '../core/dates.js';
 import { compareRun, planAdvice, regenerateFrom, runsByWorkout, weekProgress, workoutStatus } from '../core/tracking.js';
 import { formatDuration } from '../core/units.js';
+import { canInsertTest, climbTrend, goalAdvice, insertTest, nextWorkoutDate, suggestThresholdUpdate, testResultFromRun } from '../core/suggest.js';
 import { esc } from './util.js';
 
 const PHASE_LABEL = { base: 'Base', build: 'Build', peak: 'Peak', taper: 'Taper' };
@@ -28,8 +29,8 @@ async function copyText(text) {
   }
 }
 
-export function mountPlan(el, { storage, today, getSettings, getHistory, goto }) {
-  const state = { plan: null, messages: [], loaded: false, notice: null, confirmRegen: false, confirmNew: false, open: new Set(), runs: [] };
+export function mountPlan(el, { storage, today, getSettings, getHistory, goto, onUseThreshold = () => {} }) {
+  const state = { plan: null, messages: [], loaded: false, notice: null, confirmRegen: false, confirmNew: false, open: new Set(), runs: [], suggestState: {} };
 
   const ctx = () => {
     const s = getSettings();
@@ -56,7 +57,7 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto })
       ? `${race.distanceKm} km, ${race.elevationGainM} m climbing (${race.kmEffort.toFixed(0)} km-effort). Expected duration ${hm(race.expectedDurationMin[0])} to ${hm(race.expectedDurationMin[1])}.`
       : `${race.distanceKm} km. Predicted time ${formatDuration(Math.round(race.predictedSec * 0.97))} to ${formatDuration(Math.round(race.predictedSec * 1.03))}${p.goalPaceSecPerKm ? `, goal pace ${Math.floor(p.goalPaceSecPerKm / 60)}:${String(p.goalPaceSecPerKm % 60).padStart(2, '0')}/km` : ''}.`;
     const peak = trail ? `Peak ${p.peak.hours} h and ${p.peak.vertM} m a week.` : `Peak ${p.peak.km} km a week.`;
-    return `<section class="card"><h2>${esc(p.mode === 'trail' ? 'Trail' : 'Road')} plan: ${esc(p.startDate)} to ${esc(p.raceDate)} <span class="tag ${p.status === 'WARN' ? 'coros' : ''}">${esc(p.status)}</span></h2>
+    return `${''}<section class="card"><h2>${esc(p.mode === 'trail' ? 'Trail' : 'Road')} plan: ${esc(p.startDate)} to ${esc(p.raceDate)} <span class="tag ${p.status === 'WARN' ? 'coros' : ''}">${esc(p.status)}</span></h2>
       <p>${esc(facts)} ${esc(peak)} ${p.weeks.length} weeks.</p>
       ${messagesHtml(state.messages)}
       ${state.notice ? `<p class="notice ${state.notice.kind}">${esc(state.notice.text)}</p>` : ''}
@@ -79,6 +80,50 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto })
     return adv.map((a) => `<p class="notice warn">${esc(a.text)} <button type="button" data-act="regen">Regenerate from next Monday</button></p>`).join('');
   }
 
+  const clock = (sec) => `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+
+  function suggestionsHtml() {
+    const p = state.plan;
+    const s = getSettings();
+    const parts = [];
+    const sg = suggestThresholdUpdate({ runs: state.runs, thresholds: s.thresholds, today, raceDate: p.raceDate, state: state.suggestState, easyPaceSecPerKm: p.easyPaceSecPerKm, mode: p.mode });
+    if (sg.kind === 'update') {
+      const bits = [];
+      if (sg.lthr?.proposed) bits.push(`LTHR ${sg.lthr.current} → ${sg.lthr.proposed} bpm`);
+      if (sg.pace?.proposed) bits.push(`threshold pace ${clock(sg.pace.current)} → ${clock(sg.pace.proposed)} /km`);
+      parts.push(`<div class="notice ok"><strong>Your fitness looks higher.</strong> ${esc(sg.evidence.join(' '))}<br>Suggested: ${esc(bits.join(', '))}. It applies from your next workout and never changes past ones.
+        <button type="button" class="primary" data-sg="accept">Review and add</button> <button type="button" data-sg="dismiss">Not now (21 days)</button></div>`);
+    } else if (sg.kind === 'retest') {
+      parts.push(`<div class="notice warn"><strong>Retest suggested.</strong> ${esc(sg.evidence.join(' '))} Illness or fatigue is the more likely cause, so nothing is changed automatically. A 30-minute test run will tell.
+        <button type="button" data-sg="dismiss">Not now (21 days)</button></div>`);
+    } else if (sg.kind === 'test-needed') {
+      parts.push(`<div class="notice warn"><strong>Do a 30-minute test.</strong> ${esc(sg.evidence.join(' '))} The gap is bigger than one update should move, so a test will give a reliable number. Use "Replace with 30-min test" on an upcoming quality session below.
+        <button type="button" data-sg="dismiss">Not now (21 days)</button></div>`);
+    }
+    // finished test
+    const testW = p.weeks.flatMap((w) => w.workouts).filter((w) => w.code === 'TEST');
+    for (const tw of testW) {
+      const run = state.runs.find((r) => r.matchedWorkoutId === tw.id);
+      if (!run) continue;
+      const res = testResultFromRun(run);
+      const applied = s.thresholds.some((e) => e.source === 'test' && e.effectiveFrom > tw.date);
+      if (!applied && (res.paceSecPerKm || res.lthr)) {
+        parts.push(`<div class="notice ok"><strong>Test result (${esc(tw.date)}):</strong> ${res.paceSecPerKm ? `pace ${clock(res.paceSecPerKm)} /km` : ''}${res.paceSecPerKm && res.lthr ? ', ' : ''}${res.lthr ? `LTHR ${res.lthr} bpm` : ''}.
+          <button type="button" class="primary" data-sg="use-test" data-lthr="${res.lthr ?? ''}" data-pace="${res.paceSecPerKm ?? ''}">Review and add</button></div>`);
+      }
+    }
+    if (p.mode === 'trail') {
+      const cur = s.thresholds.filter((e) => e.lthr).at(-1);
+      const ct = climbTrend(state.runs, cur?.lthr, today);
+      if (ct?.significant) parts.push(`<p class="notice ok">Your climbing speed at threshold effort rose ${ct.pct}% over 4 weeks (${ct.beforeMh} → ${ct.recentMh} m/h).</p>`);
+    } else {
+      const cur = s.thresholds.filter((e) => e.paceSecPerKm).at(-1);
+      const ga = goalAdvice({ goalTimeSec: s.race.goalTimeSec, thresholdPaceSecPerKm: cur?.paceSecPerKm, distanceKm: s.race.distanceKm });
+      if (ga) parts.push(`<p class="notice ok">Your threshold now predicts ${esc(formatDuration(ga.predictedSec))}, at least 3% faster than your goal. You could set a goal near ${esc(formatDuration(ga.suggestedGoalSec))} in Settings. It is never changed automatically.</p>`);
+    }
+    return parts.length ? `<section class="card"><h2>Thresholds</h2>${parts.join('')}</section>` : '';
+  }
+
   function stepsHtml(w) {
     const resolved = resolveTargets(w, ctx());
     const lines = stepLines(resolved.steps, { trail: state.plan.mode === 'trail' });
@@ -99,7 +144,8 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto })
     return `<article class="workout role-${esc(w.role)}${w.date === today ? ' today' : ''}">
       <header><strong>${esc(w.weekday)} ${date.getUTCDate()}/${date.getUTCMonth() + 1}</strong> <span class="code">${esc(w.code)}</span> ${esc(w.name)}
         <span class="muted small">${w.plannedMin} min${km}${climb}</span> ${statusTag}
-        <button type="button" class="link" data-copy-workout="${esc(w.id)}">Copy</button></header>
+        <button type="button" class="link" data-copy-workout="${esc(w.id)}">Copy</button>
+        ${canInsertTest(state.plan, w, today) ? `<button type="button" class="link" data-test="${esc(w.id)}">Replace with 30-min test</button>` : ''}</header>
       ${body}${actual}</article>`;
   }
 
@@ -123,7 +169,7 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto })
   }
 
   function render() {
-    el.innerHTML = `${headerCard()}${state.plan ? state.plan.weeks.map(weekHtml).join('') : ''}`;
+    el.innerHTML = `${headerCard()}${state.plan ? suggestionsHtml() : ''}${state.plan ? state.plan.weeks.map(weekHtml).join('') : ''}`;
   }
 
   async function generate({ keepPast = false } = {}) {
@@ -160,7 +206,7 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto })
       state.plan = await storage.loadPlan();
       state.loaded = true;
     }
-    if (storage) state.runs = await storage.listRuns();
+    if (storage) { state.runs = await storage.listRuns(); state.suggestState = await storage.loadSuggestState(); }
     render();
   }
 
@@ -184,9 +230,29 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto })
   }, true);
 
   el.addEventListener('click', async (e) => {
-    const b = e.target.closest('[data-act],[data-copy-workout],[data-copy-week],[data-go]');
+    const b = e.target.closest('[data-act],[data-copy-workout],[data-copy-week],[data-go],[data-sg],[data-test]');
     if (!b) return;
     if (b.dataset.go) return goto(b.dataset.go);
+    if (b.dataset.test) {
+      state.plan = insertTest(state.plan, b.dataset.test);
+      if (storage) await storage.savePlan(state.plan);
+      state.notice = { kind: 'ok', text: 'The session is now a 30-minute test. Copy it to Coros, then upload the file afterwards.' };
+      return render();
+    }
+    if (b.dataset.sg) {
+      const kind = b.dataset.sg;
+      const s = getSettings();
+      const sg = suggestThresholdUpdate({ runs: state.runs, thresholds: s.thresholds, today, raceDate: state.plan.raceDate, state: state.suggestState, easyPaceSecPerKm: state.plan.easyPaceSecPerKm, mode: state.plan.mode });
+      const resolve = async () => { state.suggestState = { ...state.suggestState, resolvedOn: today }; if (storage) await storage.saveSuggestState(state.suggestState); };
+      if (kind === 'dismiss') { await resolve(); return render(); }
+      if (kind === 'accept') {
+        await resolve();
+        return onUseThreshold({ lthr: sg.lthr?.proposed ?? null, paceSecPerKm: sg.pace?.proposed ?? null, effectiveFrom: nextWorkoutDate(state.plan, today), source: 'suggested' });
+      }
+      if (kind === 'use-test') {
+        return onUseThreshold({ lthr: b.dataset.lthr ? Number(b.dataset.lthr) : null, paceSecPerKm: b.dataset.pace ? Number(b.dataset.pace) : null, effectiveFrom: nextWorkoutDate(state.plan, today), source: 'test' });
+      }
+    }
     const act = b.dataset.act;
     if (act === 'generate') { await refreshRuns(); return generate(); }
     if (act === 'regen') { state.confirmRegen = true; state.confirmNew = false; return render(); }

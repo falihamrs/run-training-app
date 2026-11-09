@@ -357,12 +357,12 @@ export function mountSettings(root, { storage, settings, savedAt = null, today, 
     if (paceText !== '' && paceSecPerKm == null) errors.push('Threshold pace must look like 5:30.');
     if (lthr != null && Number.isNaN(lthr)) errors.push('LTHR must be a number.');
     if (errors.length === 0) {
-      const r = addThresholdEntry(state.settings.thresholds, { effectiveFrom: state.draft.effectiveFrom, lthr, paceSecPerKm, source: 'manual' }, today);
+      const r = addThresholdEntry(state.settings.thresholds, { effectiveFrom: state.draft.effectiveFrom, lthr, paceSecPerKm, source: state.draft.source || 'manual' }, today);
       errors.push(...r.errors);
       if (r.errors.length === 0) state.settings.thresholds = r.list;
     }
     state.draftErrors = errors;
-    if (errors.length === 0) state.draft = { effectiveFrom: defaultEffectiveFrom(today), lthr: '', pace: '' };
+    if (errors.length === 0) state.draft = { effectiveFrom: defaultEffectiveFrom(today), lthr: '', pace: '', source: 'manual' };
     render();
   }
 
@@ -457,10 +457,11 @@ export function mountSettings(root, { storage, settings, savedAt = null, today, 
   return {
     state,
     /** Open the Thresholds tab with a pre-filled draft (used by History suggestions). */
-    prefillThreshold({ lthr = null, paceSecPerKm = null }) {
+    prefillThreshold({ lthr = null, paceSecPerKm = null, effectiveFrom = null, source = 'suggested' }) {
       state.tab = 'thresholds';
       state.draft = {
-        effectiveFrom: state.settings.thresholds.length ? defaultEffectiveFrom(today) : today,
+        effectiveFrom: effectiveFrom ?? (state.settings.thresholds.length ? defaultEffectiveFrom(today) : today),
+        source,
         lthr: lthr != null ? String(lthr) : state.draft.lthr,
         pace: paceSecPerKm != null ? formatPace(paceSecPerKm) : state.draft.pace,
       };

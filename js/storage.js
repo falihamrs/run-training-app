@@ -133,6 +133,14 @@ export async function deletePlan(db, id = 'main') {
   await db.plans.delete(id);
 }
 
+export async function loadSuggestState(db) {
+  return (await db.settings.get('suggestState'))?.value ?? {};
+}
+
+export async function saveSuggestState(db, value) {
+  await db.settings.put({ key: 'suggestState', value, savedAt: new Date().toISOString() });
+}
+
 export async function requestPersistence() {
   if (navigator.storage?.persist) return navigator.storage.persist();
   return false;

@@ -1,6 +1,6 @@
 import { todayLocal } from './core/dates.js';
 import { defaultSettings } from './core/defaults.js';
-import { addRun, deletePlan, deleteRun, loadPlan, savePlan, exportBackup, importBackup, isPersisted, listRuns, loadSelfReport, loadSettings, openDb, requestPersistence, saveSelfReport, saveSettings, updateRun } from './storage.js';
+import { addRun, deletePlan, deleteRun, loadPlan, loadSuggestState, savePlan, saveSuggestState, exportBackup, importBackup, isPersisted, listRuns, loadSelfReport, loadSettings, openDb, requestPersistence, saveSelfReport, saveSettings, updateRun } from './storage.js';
 import { mountHistory } from './ui/history.js';
 import { mountPlan } from './ui/plan.js';
 import { mountSettings } from './ui/settings.js';
@@ -34,6 +34,8 @@ async function start() {
       savePlan: (p) => savePlan(db, p),
       loadPlan: () => loadPlan(db),
       deletePlan: () => deletePlan(db),
+      loadSuggestState: () => loadSuggestState(db),
+      saveSuggestState: (v) => saveSuggestState(db, v),
     };
   } catch (err) {
     storageProblem = `Browser storage is not available (${err.message}). You can look around, but nothing can be saved. Private browsing mode is a common cause.`;
@@ -63,6 +65,7 @@ async function start() {
     getSettings: () => settingsUi.currentSettings(),
     getHistory: (opts) => historyUi.getSummary(opts),
     goto: (p) => show(p),
+    onUseThreshold: (suggestion) => { settingsUi.prefillThreshold(suggestion); show('settings'); },
   });
   function show(page) {
     for (const [name, el] of Object.entries(pageEls)) el.hidden = name !== page;

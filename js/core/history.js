@@ -29,6 +29,29 @@ function confidenceOf(values, tol = 0.03, better = 'max') {
 }
 
 /**
+ * Qualifying hard efforts in a set of runs. lthr values are the raw average heart rates of
+ * hard 20-minute windows; pace values are flat 30-minute paces (or 20-minute paces x 1.04, or a
+ * Riegel 10 km equivalent from a flat race).
+ */
+export function collectEfforts(pool, easyPaceSecPerKm) {
+  const lthr = [];
+  const pace = [];
+  for (const r of pool) {
+    const h = r.efforts?.w20?.hard;
+    if (h) {
+      const faster = easyPaceSecPerKm && h.paceSecPerKm <= easyPaceSecPerKm * 0.85;
+      if (faster || h.gradePct >= 6) lthr.push({ value: h.avgHr, date: r.date, race: Boolean(r.race), runId: r.id });
+    }
+    const b30 = r.efforts?.w30?.bestPace;
+    const b20 = r.efforts?.w20?.bestPace;
+    if (b30) pace.push({ value: b30.paceSecPerKm, date: r.date, race: Boolean(r.race), runId: r.id });
+    else if (b20) pace.push({ value: b20.paceSecPerKm * 1.04, date: r.date, race: Boolean(r.race), runId: r.id });
+    if (r.race && r.distanceKm >= 5 && r.climbDensity < 10) pace.push({ value: pace10kEquivalent(r.movingSec, r.distanceKm) * 1.04, date: r.date, race: true, runId: r.id });
+  }
+  return { lthr, pace };
+}
+
+/**
  * @param runs analysed run records (any order, may contain duplicates)
  * @param opts { planStart, asOf, lthr, selfReport, mode }
  */
@@ -126,27 +149,11 @@ export function analyzeHistory(runsIn, { planStart, asOf, lthr = null, selfRepor
   result.climbSpeedAtZ4 = z4.length ? median(z4) : null;
   result.climbSpeedAtZ2 = z2.length ? median(z2) : null;
 
-  // LTHR suggestion
-  const hrCandidates = [];
-  for (const r of pool) {
-    const h = r.efforts?.w20?.hard;
-    if (!h) continue;
-    const faster = result.easyPaceSecPerKm && h.paceSecPerKm <= result.easyPaceSecPerKm * 0.85;
-    if (faster || h.gradePct >= 6) hrCandidates.push(h.avgHr);
-  }
-  const lt = confidenceOf(hrCandidates, 0.03, 'max');
+  // Threshold suggestions
+  const eff = collectEfforts(pool, result.easyPaceSecPerKm);
+  const lt = confidenceOf(eff.lthr.map((e) => e.value), 0.03, 'max');
   result.suggestions.lthr = lt.best ? { value: Math.round(0.95 * lt.best), confidence: lt.confidence, supporting: lt.supporting } : { value: null, confidence: 'low', supporting: 0 };
-
-  // Threshold pace suggestion (flat efforts)
-  const paceCandidates = [];
-  for (const r of pool) {
-    const b30 = r.efforts?.w30?.bestPace;
-    const b20 = r.efforts?.w20?.bestPace;
-    if (b30) paceCandidates.push(b30.paceSecPerKm);
-    else if (b20) paceCandidates.push(b20.paceSecPerKm * 1.04);
-    if (r.race && r.distanceKm >= 5 && r.climbDensity < 10) paceCandidates.push(pace10kEquivalent(r.movingSec, r.distanceKm) * 1.04);
-  }
-  const tp = confidenceOf(paceCandidates, 0.03, 'min');
+  const tp = confidenceOf(eff.pace.map((e) => e.value), 0.03, 'min');
   result.suggestions.thresholdPaceSecPerKm = tp.best ? { value: Math.round(tp.best), confidence: tp.confidence, supporting: tp.supporting } : { value: null, confidence: 'low', supporting: 0 };
   if (result.suggestions.thresholdPaceSecPerKm.confidence === 'low') result.notes.push('No hard flat effort found: do a 30-minute test run and upload it.');
   return result;
