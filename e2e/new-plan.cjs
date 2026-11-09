@@ -1,0 +1,51 @@
+// Optional browser check (not part of npm test): needs Playwright and the app served on http://localhost:8080 (python3 -m http.server 8080).
+// Matches a run, starts a new plan, and prints the run's match before and after; "after" must be empty.
+// Run: NODE_PATH=$(npm root -g) node e2e/new-plan.cjs  (needs sample .tcx files at the paths used below)
+const { chromium } = require('playwright');
+const fs = require('fs');
+(async () => {
+  const browser = await chromium.launch();
+  const ctx = await browser.newContext({ viewport: { width: 1100, height: 900 }, timezoneId: 'Asia/Bangkok' });
+  const page = await ctx.newPage();
+  await page.clock.install({ time: new Date('2026-10-19T08:00:00+07:00') });
+  page.on('pageerror', (e) => console.log('pageerror', e.message));
+  await page.goto('http://localhost:8080/index.html#settings');
+  await page.waitForSelector('.tabs');
+  await page.fill('[data-path="race.date"]', '2027-03-06');
+  await page.fill('[data-path="race.distanceKm"]', '10');
+  await page.selectOption('[data-path="race.mode"]', 'road');
+  await page.click('[data-tab="thresholds"]');
+  await page.fill('[data-draft="lthr"]', '171'); await page.fill('[data-draft="pace"]', '6:26');
+  await page.click('[data-action="add-threshold"]');
+  await page.click('[data-action="save"]');
+  await page.click('[data-page="history"]');
+  await page.setInputFiles('#hist-files', ['/tmp/coros/tcx/2026-11-01.tcx']);
+  await page.waitForSelector('.results li');
+  await page.click('[data-page="plan"]');
+  await page.click('[data-act="generate"]');
+  await page.waitForTimeout(800);
+  console.log('plan status', (await page.textContent('#page-plan')).includes('Road plan'));
+  await page.click('[data-page="history"]');
+  await page.waitForTimeout(300);
+  const sel = page.locator('select').filter({ has: page.locator('option') }).last();
+  const opts = await page.locator('table select option').allTextContents();
+  console.log('options', opts.slice(0, 4));
+  const val = await page.locator('table select').first().locator('option').nth(1).getAttribute('value');
+  await page.locator('table select').first().selectOption(val);
+  await page.waitForTimeout(400);
+  console.log('matched to', val);
+  console.log('select value before', await page.locator('table select').first().inputValue());
+  await page.click('[data-page="plan"]');
+  await page.waitForTimeout(500);
+  const t = await page.textContent('#page-plan');
+  console.log('done tag before', t.includes('Done:'), t.includes('done'), (t.match(/Thu 2[^]{0,120}/)||[''])[0].replace(/\s+/g,' '));
+  await page.click('[data-act="new"]');
+  await page.click('[data-act="generate"]');
+  await page.waitForTimeout(800);
+  console.log('done after new plan', (await page.textContent('#page-plan')).includes('Done:'));
+  await page.click('[data-page="history"]');
+  await page.waitForTimeout(300);
+  console.log('select value after', await page.locator('table select').first().inputValue());
+  console.log('run still listed', (await page.textContent('#page-history')).includes('2026-11-01'));
+  await browser.close();
+})();

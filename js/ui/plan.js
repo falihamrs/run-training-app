@@ -3,7 +3,7 @@ import { generatePlan } from '../core/plan/generate.js';
 import { planCsv, stepLines, weekText, workoutText } from '../core/export.js';
 import { resolveTargets } from '../core/targets.js';
 import { WEEKDAYS, diffDays, nextMonday } from '../core/dates.js';
-import { compareRun, planAdvice, regenerateFrom, runsByWorkout, weekProgress, workoutStatus } from '../core/tracking.js';
+import { compareRun, planAdvice, regenerateFrom, runsByWorkout, runsToUnlink, weekProgress, workoutStatus } from '../core/tracking.js';
 import { formatDuration } from '../core/units.js';
 import { canInsertTest, climbTrend, goalAdvice, insertTest, nextWorkoutDate, suggestThresholdUpdate, testResultFromRun } from '../core/suggest.js';
 import { esc } from './util.js';
@@ -216,7 +216,7 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
     // Workout ids are only week number and weekday, so a replaced plan would silently inherit the old
     // matches. Unlink them (the prescribed snapshot on each run stays as the record).
     if (!keepPast && storage && state.plan) {
-      for (const run of state.runs) if (run.matchedWorkoutId) await storage.updateRun(run.id, { matchedWorkoutId: null });
+      for (const id of runsToUnlink(state.runs)) await storage.updateRun(id, { matchedWorkoutId: null });
       state.runs = await storage.listRuns();
     }
     state.plan = r.plan;

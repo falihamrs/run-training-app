@@ -26,6 +26,12 @@ export function runsByWorkout(runs) {
   return map;
 }
 
+// Workout ids are only week number and weekday, so when a plan is replaced every old match has to be cleared
+// or the run would attach itself to an unrelated workout in the new plan.
+export function runsToUnlink(runs) {
+  return runs.filter((r) => r.matchedWorkoutId).map((r) => r.id);
+}
+
 export function workoutStatus(workout, run, today) {
   if (workout.role === 'S') return 'strength';
   if (run) return 'done';

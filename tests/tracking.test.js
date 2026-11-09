@@ -79,3 +79,18 @@ test('regeneration keeps past weeks locked and continues the numbering', () => {
   assert.equal(new Set(ids).size, ids.length);
   assert.equal(r.plan.weeks.at(-1).workouts.at(-1).code, 'RACE');
 });
+
+test('replacing a plan unlinks every matched run, because workout ids repeat between plans', async () => {
+  const { generatePlan } = await import('../js/core/plan/generate.js');
+  const { settingsFor, hist } = await import('./helpers/plan.js');
+  const { runsToUnlink } = await import('../js/core/tracking.js');
+  const a = generatePlan(settingsFor({}), hist(), { today: '2026-12-28' }).plan;
+  const b = generatePlan(settingsFor({ weeks: 20 }), hist(), { today: '2026-12-28' }).plan;
+  const idsA = new Set(a.weeks.flatMap((w) => w.workouts.map((x) => x.id)));
+  const idsB = new Set(b.weeks.flatMap((w) => w.workouts.map((x) => x.id)));
+  // the reason the unlink is needed: the second plan reuses ids from the first
+  assert.ok([...idsA].some((id) => idsB.has(id)));
+  const runs = [{ id: 1, matchedWorkoutId: [...idsA][0] }, { id: 2, matchedWorkoutId: null }, { id: 3 }, { id: 4, matchedWorkoutId: [...idsA][3] }];
+  assert.deepEqual(runsToUnlink(runs), [1, 4]);
+  assert.deepEqual(runsToUnlink([]), []);
+});
