@@ -123,3 +123,19 @@ export function strengthSteps() {
     { kind: 'exercise', name: 'Plank', sets: 3, reps: '30–45 s' },
   ];
 }
+
+// Shrinks a quality session to fit a time budget: fewer reps, then shorter warm-up/cool-down, then a shorter main set.
+export function fitSteps(steps, maxMin) {
+  if (totalMinutes(steps) <= maxMin) return steps;
+  const s = steps.map((x) => ({ ...x }));
+  const total = () => totalMinutes(s);
+  const main = s.find((x) => ['repeat', 'work', 'steady', 'easy'].includes(x.kind));
+  while (main?.kind === 'repeat' && main.reps > 3 && total() > maxMin) main.reps -= 1;
+  for (const x of s) {
+    if (x.kind === 'warmup') while (x.durationMin > 8 && total() > maxMin) x.durationMin -= 1;
+    if (x.kind === 'cooldown') while (x.durationMin > 6 && total() > maxMin) x.durationMin -= 1;
+  }
+  if (main && main.kind !== 'repeat') while (main.durationMin > 10 && total() > maxMin) main.durationMin -= 1;
+  while (main?.kind === 'repeat' && main.reps > 2 && total() > maxMin) main.reps -= 1;
+  return s;
+}

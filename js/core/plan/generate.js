@@ -80,8 +80,13 @@ export function generatePlan(settingsIn, history, { today, id = 'main', now = nu
     const layoutOpts = { runs: v.effectiveRunsPerWeek, available, b2b: b2bWeek };
     let layout;
     if (isRaceWeek) {
-      const raceAvail = available.filter((d) => WEEKDAYS.indexOf(d) < raceIdx - 0 && WEEKDAYS.indexOf(d) <= raceIdx - 1);
-      layout = layoutFor(`race-${raceWeekday}`, { ...layoutOpts, available: raceAvail, runs: Math.min(layoutOpts.runs, Math.max(2, raceAvail.length)), noLong: true, b2b: false });
+      let raceAvail = available.filter((d) => WEEKDAYS.indexOf(d) < raceIdx);
+      // the day before the race is the shakeout, so it does not count as one of the week's runs
+      const shakeDay = WEEKDAYS[(raceIdx + 6) % 7];
+      const withoutShake = raceAvail.filter((d) => d !== shakeDay);
+      let raceRuns = layoutOpts.runs;
+      if (withoutShake.length >= 3) { raceAvail = withoutShake; raceRuns = Math.max(2, layoutOpts.runs - 1); }
+      layout = layoutFor(`race-${raceWeekday}`, { ...layoutOpts, available: raceAvail, runs: Math.min(raceRuns, Math.max(2, raceAvail.length)), noLong: true, b2b: false });
     } else {
       layout = layoutFor(b2bWeek ? 'b2b' : 'normal', layoutOpts);
     }
@@ -93,7 +98,7 @@ export function generatePlan(settingsIn, history, { today, id = 'main', now = nu
       if (!seenLayoutMessages.has(m)) { seenLayoutMessages.add(m); messages.push({ level: 'warn', code: 'layout', text: m }); }
     }
     const assign = { ...layout.assign };
-    if (down) for (const d of Object.keys(assign)) if (assign[d] === 'Q2') assign[d] = 'E';
+    if (down && !trail) for (const d of Object.keys(assign)) if (assign[d] === 'Q2') assign[d] = 'E';
     const dayOfRole = (r) => Object.keys(assign).find((d) => assign[d] === r);
     const runCount = Object.keys(assign).length;
 
@@ -139,7 +144,7 @@ export function generatePlan(settingsIn, history, { today, id = 'main', now = nu
         state.prevLong = Math.max(state.prevLong, longSize);
       }
     }
-    const longMin = longSize == null ? 0 : trail ? longSize : Math.round((longSize * easyPace) / 60);
+    let longMin = longSize == null ? 0 : trail ? longSize : Math.round((longSize * easyPace) / 60);
 
     // quality sessions
     const quality = {};
@@ -190,6 +195,12 @@ export function generatePlan(settingsIn, history, { today, id = 'main', now = nu
 
     const pickTrail = (slot, day) => {
       const t = terrain[day];
+      if (down && slot === 'Q2') {
+        // recovery week: keep the climbing but drop the intensity
+        if (t === 'incline') return { code: 'INC', steps: W.inclineSteps('steady', 35), climb: true };
+        if (t === 'hills') return { code: 'EZ', steps: W.easySteps(35, { zone: 'Z2', flat: false, climbM: 1 }), climb: true, extra: { name: 'Easy hilly run' } };
+        return null;
+      }
       if (phase === 'base') {
         if (slot === 'Q1') { const reps = Math.min(10, 6 + state.ptr.FAR); bump('FAR'); return { code: 'FAR', steps: W.fartlekSteps(Math.min(8, reps), { trail: true }), extra: { name: 'Flat fartlek by heart rate' } }; }
         if (t === 'hills') { const r = Math.min(4, state.ptr.HIL++); return { code: 'HIL', steps: W.hillRepeatSteps(r), climb: true }; }
@@ -229,7 +240,36 @@ export function generatePlan(settingsIn, history, { today, id = 'main', now = nu
     if (trail && quality.Q2?.code === 'INC' && quality.Q2.steps[0].kind === 'repeat') { q2Min = W.totalMinutes(quality.Q2.steps); }
 
     // medium (b2b)
-    const medMin = medDay ? Math.max(30, round5((trail ? 0.5 : 0.5) * longMin)) : 0;
+    let medMin = medDay ? Math.max(30, round5((trail ? 0.5 : 0.5) * longMin)) : 0;
+
+    // fit the week: shrink quality sessions, drop a small easy run, and spread any slack in back-to-back weeks
+    if (trail && !isRaceWeek) {
+      const MIN_EASY = 20;
+      const qSlots = ['Q1', 'Q2'].filter((k) => quality[k]?.steps);
+      const easyList = () => WEEKDAYS.filter((d) => assign[d] === 'E' || assign[d] === 'R');
+      const fixed = () => longMin + medMin;
+      while (Object.keys(assign).length > 3 && easyList().length && fixed() + qSlots.length * 30 + easyList().length * MIN_EASY > 1.1 * weekMin) {
+        const list = easyList();
+        const d = list.filter((x) => assign[x] === 'R').pop() ?? list[list.length - 1];
+        delete assign[d];
+        if (!flags.some((f) => f.startsWith('A run was dropped'))) flags.push('A run was dropped because the weekly time is too small for this many runs.');
+      }
+      if (qSlots.length) {
+        const per = Math.max(20, Math.floor((weekMin - fixed() - easyList().length * MIN_EASY) / qSlots.length));
+        for (const k of qSlots) if (W.totalMinutes(quality[k].steps) > per) quality[k].steps = W.fitSteps(quality[k].steps, per);
+        q1Min = qMin('Q1');
+        q2Min = qMin('Q2');
+      }
+      if (layout.b2b && medDay && longDay && !easyList().length) {
+        const room = weekMin - q1Min - q2Min;
+        const newLong = Math.min(params.peakLongMin, round5(1.3 * longMin), round5(room / 1.5));
+        if (newLong > longMin) {
+          longMin = newLong;
+          medMin = Math.max(30, Math.min(round5(room - newLong), round5(0.7 * newLong)));
+          state.prevLong = Math.max(state.prevLong, longMin);
+        }
+      }
+    }
 
     // time available for easy runs
     let totalMinTarget;
@@ -255,6 +295,7 @@ export function generatePlan(settingsIn, history, { today, id = 'main', now = nu
     }
     if (droppedDays.length) flags.push('A recovery run was dropped because the weekly volume is too small to split further.');
     for (const d of easyDays) if (sizes[d] < floorMin) sizes[d] = floorMin;
+    if (isRaceWeek) for (const d of easyDays) sizes[d] = Math.min(sizes[d], 45);
 
     // ---- climbing allocation (trail) ----
     const alloc = {};
@@ -324,7 +365,7 @@ export function generatePlan(settingsIn, history, { today, id = 'main', now = nu
     // strides on up to two flat easy runs
     let nStr = 0;
     for (const w of workouts) {
-      if (w.code === 'EZ' && nStr < 2 && (!trail || terrain[w.weekday] === 'flat' || terrain[w.weekday] === 'incline') && vw.phase !== 'taper-last') {
+      if (w.code === 'EZ' && w.role !== 'Q2' && nStr < 2 && (!trail || terrain[w.weekday] === 'flat' || terrain[w.weekday] === 'incline') && vw.phase !== 'taper-last') {
         w.steps = [...w.steps, W.strides(true)];
         w.plannedMin = W.totalMinutes(w.steps);
         w.hasStrides = true;
@@ -389,7 +430,7 @@ export function generatePlan(settingsIn, history, { today, id = 'main', now = nu
 
     const runW = kept.filter((w) => w.role !== 'S');
     weeks.push({
-      n: vw.n, start, phase: vw.phase, kind: vw.kind, targetKm: vw.targetKm ?? null, targetHours: vw.targetHours ?? null, targetVertM: vw.targetVertM ?? null,
+      n: vw.n, start, phase: vw.phase, kind: vw.kind, targetKm: vw.targetKm ?? null, targetHours: vw.targetHours ?? null, targetVertM: isRaceWeek && trail ? 0 : vw.targetVertM ?? null,
       reason: vw.reason, flags, workouts: kept,
       plannedMin: runW.reduce((s, w) => s + w.plannedMin, 0),
       plannedKm: trail ? null : Math.round(runW.reduce((s, w) => s + (w.plannedKm ?? 0), 0) * 10) / 10,
@@ -410,6 +451,10 @@ export function generatePlan(settingsIn, history, { today, id = 'main', now = nu
       prevWeek.workouts.push({ id: `w${prevWeek.n}-${weekdayOf(dayBefore)}-SHK`, date: dayBefore, weekday: weekdayOf(dayBefore), week: prevWeek.n, code: 'SHK', name: W.NAMES.SHK, role: 'E', terrain: 'flat', steps, plannedMin: W.totalMinutes(steps), plannedKm: trail ? null : 3, plannedVertM: 0, notes: [], locked: false });
       prevWeek.workouts.sort((a, b) => (a.date < b.date ? -1 : 1));
     }
+    const rw = prevWeek.workouts.filter((w) => w.role !== 'S' && w.role !== 'RACE');
+    prevWeek.plannedMin = rw.reduce((x, w) => x + w.plannedMin, 0);
+    prevWeek.plannedVertM = rw.reduce((x, w) => x + (w.plannedVertM ?? 0), 0);
+    if (!trail) prevWeek.plannedKm = Math.round(rw.reduce((x, w) => x + (w.plannedKm ?? 0), 0) * 10) / 10;
   }
   last.workouts.push({
     id: `race`, date: raceDate, weekday: raceWeekday, week: last.n, code: 'RACE', name: trail ? `Race: ${race.distanceKm} km, ${race.elevationGainM} m` : `Race: ${race.distanceKm} km`, role: 'RACE', terrain: trail ? 'hills' : 'flat',

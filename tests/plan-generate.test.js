@@ -31,13 +31,14 @@ test('plan is deterministic', () => {
   assert.equal(JSON.stringify(gen({}).plan), JSON.stringify(gen({}).plan));
 });
 
-test('hard sessions are never on adjacent days and Q2 is skipped in down weeks', () => {
+test('hard sessions are never on adjacent days and down weeks have no hard Q2', () => {
   for (const opts of [{}, trailOpts, { runs: 4 }, { runs: 6 }, { ...trailOpts, runs: 4 }]) {
     const p = gen(opts).plan;
     for (const w of p.weeks) {
       const hard = runs(w).filter((x) => HARD.includes(x.role)).map((x) => x.date);
       for (let i = 0; i < hard.length; i++) for (let j = i + 1; j < hard.length; j++) assert.ok(Math.abs(diffDays(hard[i], hard[j])) > 1, `week ${w.n}`);
-      if (w.kind === 'down') assert.ok(!runs(w).some((x) => x.role === 'Q2'), `down week ${w.n} has Q2`);
+      // road down weeks drop Q2; trail down weeks keep a light climbing session without intervals
+      if (w.kind === 'down') assert.ok(!runs(w).some((x) => x.role === 'Q2' && x.steps.some((s) => s.kind === 'repeat')), `down week ${w.n} has a hard Q2`);
     }
   }
 });
@@ -180,4 +181,17 @@ test('too few runs a week for the climbing target recommends more runs', () => {
   }
   const more = gen({ ...o, runs: 5 }, { baselineWeeklyHours: 4, longestRunMin: 120, baselineWeeklyVertM: 400 });
   assert.ok(!more.messages.some((m) => m.code === 'runsTooFew' && m.recommendedRuns !== null));
+});
+
+test('trail weeks stay close to their time target and race week keeps the run count', () => {
+  const r = gen({ ...trailOpts, distanceKm: 25, gain: 2300, runs: 4, weeks: 24 }, { baselineWeeklyHours: 4, longestRunMin: 120, baselineWeeklyVertM: 400 });
+  assert.ok(r.plan);
+  const weeks = r.plan.weeks;
+  for (const w of weeks.slice(0, -1)) {
+    const target = w.targetHours * 60;
+    assert.ok(w.plannedMin <= target * 1.12 + 5 && w.plannedMin >= target * 0.8, `week ${w.n}: ${w.plannedMin} vs ${target}`);
+  }
+  const last = weeks[weeks.length - 1];
+  assert.ok(last.workouts.filter((x) => x.role !== 'S' && x.role !== 'RACE').length <= 4);
+  assert.equal(last.plannedMin, last.workouts.filter((x) => x.role !== 'S' && x.role !== 'RACE').reduce((s, x) => s + x.plannedMin, 0));
 });
