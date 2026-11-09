@@ -204,7 +204,8 @@ test('no hills or incline day: advice is to set terrain, not to add runs', () =>
 });
 
 test('very low baseline: early weeks stay near the time target by using fewer runs', () => {
-  const r = gen({ ...trailOpts, distanceKm: 25, gain: 2300, runs: 4, weeks: 32 }, { baselineWeeklyHours: 1.1, longestRunMin: 80, baselineWeeklyVertM: 40 });
+  const r = generatePlan(settingsFor({ ...trailOpts, distanceKm: 25, gain: 2300, runs: 4, weeks: 32 }), hist({ baselineWeeklyHours: 1.1, longestRunMin: 80, baselineWeeklyVertM: 40 }), { today: TODAY, overrideEntry: true });
+  assert.ok(r.plan);
   const first = r.plan.weeks[0];
   assert.ok(first.plannedMin <= first.targetHours * 60 * 1.1 + 1, `${first.plannedMin} vs ${first.targetHours * 60}`);
   assert.ok(first.workouts.filter((w) => w.role !== 'S').length >= 2);
