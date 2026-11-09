@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { analyzeHistory, dedupe } from '../js/core/history.js';
-import { riegelTime, pace10kEquivalent } from '../js/core/riegel.js';
+import { riegelTime, pace10kEquivalent, oneHourPace } from '../js/core/riegel.js';
 import { addDays } from '../js/core/dates.js';
 
 let uid = 0;
@@ -94,4 +94,12 @@ test('Riegel helpers', () => {
   assert.ok(Math.abs(riegelTime(3000, 10, 10) - 3000) < 1e-9);
   assert.ok(riegelTime(3000, 10, 21.0975) > 3000 * 2.1);
   assert.ok(Math.abs(pace10kEquivalent(3000, 10) - 300) < 1e-9);
+});
+
+test('race to threshold pace uses the one-hour pace, not a fixed factor', () => {
+  assert.ok(Math.abs(oneHourPace(3600, 10) - 360) < 1e-9);
+  const p = oneHourPace(4076, 10.01); // 67:56 for 10 km
+  assert.ok(p > 400 && p < 410, String(p));
+  const fast = oneHourPace(2400, 10); // 40:00 10 km
+  assert.ok(fast > 240 && fast < 255 * 1.05);
 });

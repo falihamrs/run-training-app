@@ -1,6 +1,6 @@
 // Turns many analysed runs into the numbers the plan generator starts from.
 import { addDays, diffDays, mondayOnOrBefore, localDateOfMs } from './dates.js';
-import { pace10kEquivalent } from './riegel.js';
+import { oneHourPace } from './riegel.js';
 
 const median = (a) => {
   if (!a.length) return null;
@@ -46,7 +46,7 @@ export function collectEfforts(pool, easyPaceSecPerKm) {
     const b20 = r.efforts?.w20?.bestPace;
     if (b30) pace.push({ value: b30.paceSecPerKm, date: r.date, race: Boolean(r.race), runId: r.id });
     else if (b20) pace.push({ value: b20.paceSecPerKm * 1.04, date: r.date, race: Boolean(r.race), runId: r.id });
-    if (r.race && r.distanceKm >= 5 && r.climbDensity < 10) pace.push({ value: pace10kEquivalent(r.movingSec, r.distanceKm) * 1.04, date: r.date, race: true, runId: r.id });
+    if (r.race && r.distanceKm >= 5 && r.climbDensity < 10) pace.push({ value: oneHourPace(r.movingSec, r.distanceKm), date: r.date, race: true, runId: r.id });
   }
   return { lthr, pace };
 }
