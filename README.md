@@ -98,6 +98,15 @@ npm test
 - An activity's date uses the browser's time zone at the time of the run; if the GPS shows it was recorded more than three hours of time zone away, the run's own zone is used.
 - Trail races above 45 km or 75 km-effort stay out of scope: the training tables stop there.
 
+## Typing in climbing (treadmill runs)
+
+A treadmill file has no elevation, and a watch cannot change it afterwards. In History, press **edit**
+next to a run's climbing. The run is shown in 1 km splits with pace and heart rate. Type the incline (%)
+you used in each split, or switch to metres for an outdoor run with a wrong reading. "Fill all" sets
+every split at once. Saving replaces the run's climbing, so weekly climbing, plan progress, sustained
+climbs (8 minutes or more at 6% or steeper) and threshold suggestions all use it. "Back to the watch
+value" undoes it.
+
 ## Data and backups
 
 Data is stored in your browser's IndexedDB, on one device. Clearing browser data erases it, so

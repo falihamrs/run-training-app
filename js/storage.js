@@ -141,6 +141,10 @@ export async function deleteRun(db, id) {
   });
 }
 
+export async function getStream(db, runId) {
+  return (await db.streams.get(runId)) ?? null;
+}
+
 export async function listStreamIds(db) {
   return db.streams.toCollection().primaryKeys();
 }

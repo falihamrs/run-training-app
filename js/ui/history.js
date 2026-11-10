@@ -7,18 +7,23 @@ import { prescribedSnapshot } from '../core/targets.js';
 import { runsByWorkout, suggestMatch } from '../core/tracking.js';
 import { activityTzOffsetMin, diffDays } from '../core/dates.js';
 import { formatBytes, integrityReport, runsInRange } from '../core/housekeeping.js';
+import { MAX_INCLINE_PCT, MAX_SPLIT_GAIN_M, clearManualClimbPatch, kmSplits, manualClimbPatch, splitGains, validateSplitValues } from '../core/splits.js';
 import { esc } from './util.js';
 
 const fmtKm = (v) => (v == null ? '–' : v.toFixed(1));
 const CONF = { high: 'High', medium: 'Medium', low: 'Low' };
 
 export function mountHistory(el, { storage, getSettings, today, tzOffsetMin = null, onUseThreshold, getPlan = () => null, getContext = () => null, onMatchChange = () => {} }) {
-  const state = { runs: [], selfReport: null, results: [], busy: false, acceptOther: false, error: null, hk: { from: '', to: '', keepRaces: true, confirm: false, report: null, usage: null, notice: null } };
+  const state = { runs: [], selfReport: null, results: [], busy: false, acceptOther: false, error: null, climb: null, hk: { from: '', to: '', keepRaces: true, confirm: false, report: null, usage: null, notice: null } };
 
   async function reload() {
     if (!storage) return;
     state.runs = await storage.listRuns();
     state.selfReport = await storage.loadSelfReport();
+    if (state.climb) {
+      const r = state.runs.find((x) => x.id === state.climb.id);
+      if (r) state.climb.run = r; else state.climb = null; // the run being edited was deleted
+    }
   }
 
   function matchOptions(r) {
@@ -105,7 +110,7 @@ export function mountHistory(el, { storage, getSettings, today, tzOffsetMin = nu
     if (!state.runs.length) return '';
     const rows = [...state.runs].reverse().map((r) => `<tr>
       <td>${esc(r.date)}</td><td>${r.distanceKm.toFixed(1)}</td><td>${formatDuration(r.movingSec)}</td>
-      <td>${formatPace(r.avgPaceSecPerKm)}</td><td>${r.avgHr ? Math.round(r.avgHr) : '–'}</td><td>${Math.round(r.gainM)}</td><td>${esc(r.terrain)}</td>${getPlan() ? `<td>${matchOptions(r)}</td>` : ''}
+      <td>${formatPace(r.avgPaceSecPerKm)}</td><td>${r.avgHr ? Math.round(r.avgHr) : '–'}</td><td>${Math.round(r.gainM)}${r.manualClimb ? ' <span class="tag">typed</span>' : ''} <button type="button" class="link" data-climb="${r.id}" aria-label="Edit climbing for the run on ${esc(r.date)}">edit</button></td><td>${esc(r.terrain)}</td>${getPlan() ? `<td>${matchOptions(r)}</td>` : ''}
       <td><label class="inline"><input type="checkbox" data-race="${r.id}" ${r.race ? 'checked' : ''}> race</label></td>
       <td><button type="button" class="link" data-del="${r.id}">Delete</button></td></tr>`).join('');
     return `<section class="card"><h2>Activities (${state.runs.length})</h2>
@@ -149,11 +154,59 @@ export function mountHistory(el, { storage, getSettings, today, tzOffsetMin = nu
     try { state.hk.usage = await storage.storageUsage(); } catch { state.hk.usage = null; }
   }
 
+  // Editor for typed climbing: one row per km split, as treadmill incline (%) or metres.
+  function climbTotalText() {
+    const c = state.climb;
+    const total = splitGains(c.splits, c.values, c.unit).reduce((a, b) => a + b, 0);
+    return `Total climbing: ${Math.round(total)} m (${Math.round(total / c.run.distanceKm)} m per km)`;
+  }
+
+  function climbCard() {
+    const c = state.climb;
+    if (!c) return '';
+    const r = c.run;
+    const pct = c.unit === 'pct';
+    const device = r.manualClimb?.device?.gainM ?? r.gainM;
+    const rows = c.splits.map((s, i) => `<tr>
+      <td>${s.n}${s.distM < 995 ? ` <span class="muted small">(${Math.round(s.distM)} m)</span>` : ''}</td>
+      <td>${s.sec > 0 && s.distM > 0 ? formatPace((s.sec / s.distM) * 1000) : '–'}</td>
+      <td>${s.avgHr ? Math.round(s.avgHr) : '–'}</td>
+      <td><input type="number" inputmode="decimal" min="0" max="${pct ? MAX_INCLINE_PCT : MAX_SPLIT_GAIN_M}" step="${pct ? 0.5 : 1}" data-climb-val="${i}" value="${esc(String(c.values[i] ?? ''))}" aria-label="${pct ? 'Incline in percent' : 'Climbing in metres'} for km ${s.n}" style="width:6em"></td></tr>`).join('');
+    return `<section class="card" id="climb-editor"><h2>Climbing for ${esc(r.date)} · ${r.distanceKm.toFixed(1)} km</h2>
+      <p class="muted">For a treadmill run, type the incline you used in each kilometre. For an outdoor run with a wrong elevation reading, switch to metres. The watch file says ${Math.round(device)} m; what you type here replaces it.${c.hasStream ? '' : ' This run has no detailed data (it came from a backup), so the splits use its average pace.'}</p>
+      <div class="grid">
+        <label class="field"><span class="lbl">Enter as</span><select data-climb-unit><option value="pct" ${pct ? 'selected' : ''}>Incline (%)</option><option value="m" ${pct ? '' : 'selected'}>Metres climbed</option></select></label>
+        <label class="field"><span class="lbl">Same value for every split</span><span class="row"><input type="number" inputmode="decimal" min="0" step="${pct ? 0.5 : 1}" data-climb-fill style="width:6em" aria-label="Value for every split"> <button type="button" data-climb-do="fill">Fill all</button></span></label>
+      </div>
+      <div class="scroll"><table class="list"><thead><tr><th>Km</th><th>Pace</th><th>HR</th><th>${pct ? 'Incline %' : 'Climb m'}</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <p><strong id="climb-total">${esc(climbTotalText())}</strong></p>
+      ${c.error ? `<p class="notice error">${esc(c.error)}</p>` : ''}
+      <p class="row"><button type="button" class="primary" data-climb-do="save">Save climbing</button> <button type="button" data-climb-do="cancel">Cancel</button>
+      ${r.manualClimb ? '<button type="button" data-climb-do="reset">Back to the watch value</button>' : ''}</p>
+    </section>`;
+  }
+
+  async function openClimb(id) {
+    const run = state.runs.find((r) => r.id === id);
+    if (!run) return;
+    let stream = null;
+    try { stream = await storage.getStream(id); } catch { stream = null; }
+    const splits = kmSplits(run, stream);
+    const saved = run.manualClimb;
+    state.climb = {
+      id, run, stream, splits, hasStream: Boolean(stream?.t?.length > 1), error: null,
+      unit: saved?.unit ?? 'pct',
+      values: splits.map((_, i) => (saved?.values?.[i] ? saved.values[i] : '')),
+    };
+    render();
+    el.querySelector('#climb-editor')?.scrollIntoView({ block: 'nearest' });
+  }
+
   function render() {
     const h = summary();
     el.innerHTML = `${storage ? '' : '<p class="notice error">Storage is not available, so uploaded runs cannot be kept.</p>'}
       ${state.error ? `<p class="notice error">${esc(state.error)}</p>` : ''}
-      ${uploadCard()}${summaryCard(h)}${suggestionCard(h)}${state.runs.length ? '' : selfReportCard()}${runsCard()}${housekeepingCard()}`;
+      ${uploadCard()}${summaryCard(h)}${suggestionCard(h)}${state.runs.length ? '' : selfReportCard()}${runsCard()}${climbCard()}${housekeepingCard()}`;
     el._summary = h;
   }
 
@@ -228,6 +281,16 @@ export function mountHistory(el, { storage, getSettings, today, tzOffsetMin = nu
       await reload(); render(); onMatchChange();
       return;
     }
+    if (t.dataset.climbUnit != null && state.climb) {
+      // keep the same climbing when switching between percent and metres
+      const c = state.climb;
+      const gains = splitGains(c.splits, c.values, c.unit);
+      c.unit = t.value === 'm' ? 'm' : 'pct';
+      c.values = c.splits.map((s, i) => (gains[i] > 0 ? (c.unit === 'm' ? Math.round(gains[i]) : Math.round((gains[i] / s.distM) * 1000) / 10) : ''));
+      c.error = null;
+      return render();
+    }
+    if (t.dataset.climbVal != null || t.dataset.climbFill != null) return;
     if (t.dataset.race) { await storage.updateRun(Number(t.dataset.race), { race: t.checked }); await reload(); render(); return; }
     if (t.dataset.sr) {
       const sr = { ...(state.selfReport || {}) };
@@ -241,9 +304,43 @@ export function mountHistory(el, { storage, getSettings, today, tzOffsetMin = nu
     }
   });
 
+  // typing in the climbing editor updates the total without redrawing, so the cursor stays put
+  el.addEventListener('input', (e) => {
+    const t = e.target;
+    if (t.dataset.climbVal == null || !state.climb) return;
+    state.climb.values[Number(t.dataset.climbVal)] = t.value;
+    state.climb.error = null;
+    const out = el.querySelector('#climb-total');
+    if (out) out.textContent = climbTotalText();
+  });
+
   el.addEventListener('click', async (e) => {
-    const b = e.target.closest('[data-del],[data-act],[data-hk]');
+    const b = e.target.closest('[data-del],[data-act],[data-hk],[data-climb],[data-climb-do]');
     if (!b) return;
+    if (b.dataset.climb) return openClimb(Number(b.dataset.climb));
+    if (b.dataset.climbDo) {
+      const c = state.climb;
+      if (!c) return;
+      const act = b.dataset.climbDo;
+      if (act === 'cancel') { state.climb = null; return render(); }
+      if (act === 'fill') {
+        const v = el.querySelector('[data-climb-fill]')?.value ?? '';
+        c.values = c.splits.map(() => v);
+        c.error = validateSplitValues(c.values, c.unit);
+        return render();
+      }
+      if (act === 'reset') {
+        const patch = clearManualClimbPatch(c.run);
+        if (patch) await storage.updateRun(c.id, patch);
+      } else if (act === 'save') {
+        c.error = validateSplitValues(c.values, c.unit);
+        if (c.error) return render();
+        await storage.updateRun(c.id, manualClimbPatch(c.run, c.stream, c.values, c.unit));
+      } else return;
+      state.climb = null;
+      await reload(); render(); onMatchChange();
+      return;
+    }
     if (b.dataset.hk) {
       const hk = state.hk;
       if (b.dataset.hk === 'delete') { hk.confirm = true; hk.notice = null; return render(); }
