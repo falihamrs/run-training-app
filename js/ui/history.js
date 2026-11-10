@@ -193,7 +193,7 @@ export function mountHistory(el, { storage, getSettings, today, tzOffsetMin = -n
         if (matched) parts.push(`${matched} matched to the plan`);
         if (skipped) parts.push('already in your history');
         if (rejected.length) parts.push(`skipped (${rejected.join(', ')})`);
-        state.results.push({ name: file.name, ok: added > 0 || skipped > 0, message: parts.join('; ') || 'nothing to add' });
+        state.results.push({ name: file.name, ok: added > 0 || skipped > 0, message: parts.join('; ') || (acts.length ? 'nothing to add' : 'no activity found in this file. It may be cut off or have no track points; export it again.') });
       } catch (err) {
         state.results.push({ name: file.name, ok: false, message: err.message });
       }

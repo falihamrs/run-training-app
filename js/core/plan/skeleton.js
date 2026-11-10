@@ -46,7 +46,8 @@ export function buildVolume(params, history, settings) {
     const ramp = TRAIL_RAMP[xp];
     loadSeries = progression(R, {
       first: round025(history.baselineWeeklyHours ?? 0),
-      grow: (h) => Math.min(h + 1.5, round025(h * (1 + ramp))),
+      // at least +0.25 h, or rounding to 0.25 h would hold low volumes flat forever
+      grow: (h) => Math.min(h + 1.5, Math.max(h + 0.25, round025(h * (1 + ramp)))),
       down: (h) => round025(0.8 * h),
       cap: params.peakHours,
     });
@@ -63,7 +64,7 @@ export function buildVolume(params, history, settings) {
     const ramp = ROAD_RAMP[xp];
     loadSeries = progression(R, {
       first: Math.round(history.baselineWeeklyKm ?? 0),
-      grow: (k) => Math.min(k + 8, Math.round(k * (1 + ramp))),
+      grow: (k) => Math.min(k + 8, Math.max(k + 1, Math.round(k * (1 + ramp)))),
       down: (k) => Math.round(0.8 * k),
       cap: params.peakKm,
     });

@@ -208,14 +208,13 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
     }
     state.messages = r.messages;
     if (!r.plan) {
-      if (!keepPast) state.plan = null;
-      else state.notice = { kind: 'error', text: 'The plan could not be regenerated. See the messages above; your current plan is unchanged.' };
+      if (state.plan) state.notice = { kind: 'error', text: `The plan could not be ${keepPast ? 'regenerated' : 'replaced'}. See the messages above; your current plan is unchanged.` };
       render();
       return;
     }
     // Workout ids are only week number and weekday, so a replaced plan would silently inherit the old
     // matches. Unlink them (the prescribed snapshot on each run stays as the record).
-    if (!keepPast && storage && state.plan) {
+    if (!keepPast && storage) {
       for (const id of runsToUnlink(state.runs)) await storage.updateRun(id, { matchedWorkoutId: null });
       state.runs = await storage.listRuns();
     }

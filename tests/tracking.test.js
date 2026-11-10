@@ -94,3 +94,14 @@ test('replacing a plan unlinks every matched run, because workout ids repeat bet
   assert.deepEqual(runsToUnlink(runs), [1, 4]);
   assert.deepEqual(runsToUnlink([]), []);
 });
+
+test('regenerating a plan built past the entry check keeps that choice', () => {
+  const s = settingsFor({ mode: 'trail', distanceKm: 25, gain: 2300, runs: 4, weeks: 20 });
+  const low = hist({ baselineWeeklyHours: 1.1, longestRunMin: 45, baselineWeeklyVertM: 30 });
+  assert.equal(generatePlan(s, low, { today: '2026-12-28' }).status, 'BLOCK');
+  const p = generatePlan(s, low, { today: '2026-12-28', overrideEntry: true }).plan;
+  assert.equal(p.entryOverridden, true);
+  const r = regenerateFrom(p, s, low, { today: addDays(START_PLAN(p), 15) });
+  assert.ok(r.plan, r.messages.map((m) => m.text).join(' '));
+});
+const START_PLAN = (p) => p.startDate;

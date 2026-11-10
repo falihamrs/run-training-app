@@ -92,7 +92,8 @@ export function regenerateFrom(oldPlan, settings, history, { today, now = null }
   const newStart = nextMonday(today);
   const keep = oldPlan.weeks.filter((w) => w.start < newStart).map((w) => ({ ...w, locked: true }));
   const s = { ...settings, schedule: { ...settings.schedule, startDate: newStart } };
-  const r = generatePlan(s, history, { today, id: oldPlan.id, now, allowShort: true });
+  // keep the user's earlier choice to build past the base-training check
+  const r = generatePlan(s, history, { today, id: oldPlan.id, now, allowShort: true, overrideEntry: !!oldPlan.entryOverridden });
   if (!r.plan) return r;
   const offset = keep.length;
   const weeks = r.plan.weeks.map((w) => {

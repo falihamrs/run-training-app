@@ -98,6 +98,10 @@ async function start() {
     }
   } catch { /* ignore */ }
   show(['#settings', '#history', '#plan'].includes(location.hash) ? location.hash.slice(1) : 'plan');
+  // "today" is fixed when the page loads; if the app is left open past midnight, reload when it is shown again
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && todayLocal() !== today && !settingsUi.isDirty()) location.reload();
+  });
 }
 
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {

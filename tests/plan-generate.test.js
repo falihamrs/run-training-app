@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { generatePlan } from '../js/core/plan/generate.js';
-import { WEEKDAYS, diffDays } from '../js/core/dates.js';
+import { WEEKDAYS, addDays, diffDays } from '../js/core/dates.js';
 import { TERRAIN, hist, settingsFor } from './helpers/plan.js';
 
 const TODAY = '2026-12-28';
@@ -209,4 +209,42 @@ test('very low baseline: early weeks stay near the time target by using fewer ru
   const first = r.plan.weeks[0];
   assert.ok(first.plannedMin <= first.targetHours * 60 * 1.1 + 1, `${first.plannedMin} vs ${first.targetHours * 60}`);
   assert.ok(first.workouts.filter((w) => w.role !== 'S').length >= 2);
+});
+
+test('low weekly time still ramps up instead of rounding back to the same value', () => {
+  const r = generatePlan(settingsFor({ ...trailOpts, distanceKm: 25, gain: 2300, runs: 4, weeks: 16 }), hist({ baselineWeeklyHours: 1.1, longestRunMin: 45, baselineWeeklyVertM: 30 }), { today: TODAY, overrideEntry: true });
+  const hours = r.plan.weeks.map((w) => w.targetHours);
+  assert.ok(Math.max(...hours) >= hours[0] + 2, `targets stayed flat: ${hours.join(',')}`);
+  const road = generatePlan(settingsFor({ distanceKm: 10, runs: 3, weeks: 16 }), hist({ baselineWeeklyKm: 6 }), { today: TODAY, overrideEntry: true, allowShort: true });
+  const km = road.plan.weeks.map((w) => w.targetKm);
+  assert.ok(Math.max(...km) > km[0] + 5, `road targets stayed flat: ${km.join(',')}`);
+});
+
+test('no easy run is longer than the long run, and the lost time is flagged', () => {
+  const r = generatePlan(settingsFor({ ...trailOpts, distanceKm: 15, gain: 600, runs: 4, weeks: 32 }), hist({ baselineWeeklyHours: 7, longestRunMin: 200, baselineWeeklyVertM: 1500 }), { today: TODAY, overrideEntry: true });
+  for (const w of r.plan.weeks) {
+    const long = w.workouts.find((x) => x.role === 'L');
+    if (!long) continue;
+    for (const x of w.workouts) if (x.role === 'E' || x.role === 'R') assert.ok(x.plannedMin <= long.plannedMin + 10, `week ${w.n}: ${x.code} ${x.plannedMin} > long ${long.plannedMin}`);
+  }
+  assert.ok(r.plan.weeks[0].flags.some((f) => /left out/.test(f)));
+});
+
+test('no shakeout on an unavailable day, and no hard session the day after a long run', () => {
+  const s = settingsFor({ distanceKm: 10, runs: 3, weeks: 6, unavailable: ['Mon', 'Thu'] });
+  s.race.date = addDays(s.race.date, -5); // a Tuesday
+  const r = generatePlan(s, hist(), { today: TODAY, overrideEntry: true, allowShort: true });
+  const all = r.plan.weeks.flatMap((w) => w.workouts);
+  assert.ok(!all.some((w) => w.code === 'SHK'));
+  assert.ok(all.every((w) => w.role === 'RACE' || !['Mon', 'Thu'].includes(w.weekday)));
+  const t = generatePlan(settingsFor({ ...trailOpts, distanceKm: 15, gain: 600, runs: 5, weeks: 6 }), hist(), { today: TODAY, overrideEntry: true, allowShort: true });
+  const hard = t.plan.weeks.flatMap((w) => w.workouts).filter((w) => ['Q1', 'Q2', 'L', 'RACE'].includes(w.role)).sort((a, b) => (a.date < b.date ? -1 : 1));
+  for (let i = 1; i < hard.length; i++) assert.ok(diffDays(hard[i - 1].date, hard[i].date) >= 2, `${hard[i - 1].id} then ${hard[i].id}`);
+});
+
+test('climbing never exceeds 400 m per hour in any session', () => {
+  for (const h of [hist(), hist({ baselineWeeklyHours: 7, longestRunMin: 200, baselineWeeklyVertM: 1500 }), hist({ baselineWeeklyHours: 1.1, longestRunMin: 45, baselineWeeklyVertM: 30 })]) {
+    const r = generatePlan(settingsFor({ ...trailOpts, distanceKm: 25, gain: 2300, runs: 4, weeks: 24 }), h, { today: TODAY, overrideEntry: true });
+    for (const w of r.plan.weeks.flatMap((x) => x.workouts)) if (w.role !== 'RACE' && w.plannedVertM) assert.ok(w.plannedVertM <= (400 * w.plannedMin) / 60 + 0.5, `${w.id} ${w.plannedVertM} m in ${w.plannedMin} min`);
+  }
 });
