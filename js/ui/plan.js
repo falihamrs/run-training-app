@@ -91,7 +91,7 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
   function adviceHtml() {
     const adv = planAdvice(state.plan, state.runs, today);
     if (!adv.length) return '';
-    return adv.map((a) => `<p class="notice warn">${esc(a.text)} <button type="button" data-act="regen">Regenerate from next Monday</button></p>`).join('');
+    return adv.map((a) => `<p class="notice ${a.level === 'info' ? 'ok' : 'warn'}">${esc(a.text)}${a.action === 'regen' ? ' <button type="button" data-act="regen">Regenerate from next Monday</button>' : ''}</p>`).join('');
   }
 
   const clock = (sec) => `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;

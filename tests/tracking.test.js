@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { generatePlan } from '../js/core/plan/generate.js';
 import { compareRun, planAdvice, regenerateFrom, runsByWorkout, suggestMatch, weekProgress, workoutStatus } from '../js/core/tracking.js';
-import { addDays } from '../js/core/dates.js';
+import { addDays, nextMonday } from '../js/core/dates.js';
 import { hist, settingsFor } from './helpers/plan.js';
 
 const settings = settingsFor();
@@ -61,9 +61,11 @@ test('advice: low compliance and missed weeks', () => {
   const fine = [week(1), week(2), week(3)].map((w, i) => mkRun(w.start, { id: i + 1, km: w.plannedKm }));
   assert.equal(planAdvice(plan, fine, asOf).length, 0);
   const missed1 = [week(1), week(2)].map((w, i) => mkRun(w.start, { id: i + 1, km: w.plannedKm }));
-  assert.ok(planAdvice(plan, missed1, asOf).some((a) => a.code === 'missed' && /85%/.test(a.text)));
-  assert.ok(planAdvice(plan, [mkRun(week(1).start, { km: week(1).plannedKm })], asOf).some((a) => /70%/.test(a.text)));
-  assert.ok(planAdvice(plan, [], addDays(week(5).start, 0)).some((a) => /missed 4 weeks/.test(a.text)));
+  const m1 = planAdvice(plan, missed1, asOf).find((a) => a.code === 'missed');
+  assert.match(m1.text, /You missed last week/);
+  const m2 = planAdvice(plan, [mkRun(week(1).start, { km: week(1).plannedKm })], asOf).find((a) => a.code === 'missed');
+  assert.match(m2.text, /2 weeks in a row/);
+  assert.ok(planAdvice(plan, [], addDays(week(5).start, 0)).some((a) => /4 weeks in a row/.test(a.text)));
 });
 
 test('regeneration keeps past weeks locked and continues the numbering', () => {
@@ -119,4 +121,34 @@ test('regenerating mid-plan keeps each remaining week in its phase and continues
   assert.ok(w11.includes('TMP') && !w11.includes('FAR'), w11.join(','));
   const tempo = (pl, n) => pl.weeks[n - 1].workouts.find((x) => x.code === 'TMP')?.plannedMin ?? 0;
   assert.ok(tempo(r.plan, 11) >= tempo(p, 9), `tempo restarted: ${tempo(r.plan, 11)} after ${tempo(p, 9)}`);
+});
+
+test('advice states the volume regeneration would really start from', async () => {
+  const { analyzeHistory } = await import('../js/core/history.js');
+  const asOf = addDays(week(4).start, 0);
+  const missed1 = [week(1), week(2)].map((w, i) => mkRun(w.start, { id: i + 1, km: w.plannedKm }));
+  const a = planAdvice(plan, missed1, asOf).find((x) => x.code === 'missed');
+  const h = analyzeHistory(missed1, { planStart: nextMonday(asOf), asOf, mode: 'road' });
+  const lastLoad = [...plan.weeks].filter((w) => w.start <= asOf && w.kind === 'load').pop();
+  assert.equal(a.restartPct, Math.round((100 * h.baselineWeeklyKm) / lastLoad.targetKm));
+  assert.match(a.text, new RegExp(`about ${Math.round(h.baselineWeeklyKm)} km a week, ${a.restartPct}%`));
+  // and regeneration really does start there
+  const r = regenerateFrom(plan, settings, h, { today: asOf });
+  const first = r.plan.weeks.find((w) => !w.locked);
+  assert.ok(Math.abs(first.targetKm - h.baselineWeeklyKm) <= 1, `${first.targetKm} vs ${h.baselineWeeklyKm}`);
+});
+
+test('advice when running well above the plan for three weeks', () => {
+  const asOf = addDays(week(4).start, 0);
+  const high = [week(1), week(2), week(3)].map((w, i) => mkRun(w.start, { id: i + 1, km: w.plannedKm * 1.4 }));
+  const a = planAdvice(plan, high, asOf);
+  assert.equal(a.length, 1);
+  assert.equal(a[0].code, 'high');
+  assert.equal(a[0].level, 'info');
+  assert.match(a[0].text, /about 140%/);
+  assert.equal(a[0].action, 'regen');
+  const twoWeeks = high.slice(0, 2);
+  assert.ok(!planAdvice(plan, twoWeeks, addDays(week(3).start, 0)).some((x) => x.code === 'high'));
+  const close = planAdvice(plan, high.map((r) => r), addDays(plan.raceDate, -20)).find((x) => x.code === 'high');
+  if (close) { assert.equal(close.action, null); assert.match(close.text, /keep to the plan/); }
 });

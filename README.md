@@ -85,8 +85,11 @@ npm test
 - In trail Build weeks from the third, downhill practice replaces the climbing session every other week.
 - Strength sessions never sit the day before a long or quality run, so a week can hold fewer than the
   requested number.
-- Missed-week rules (85%, 70%) are advice; regeneration rebuilds the remaining weeks from your last
-  four weeks of actual running, which has the same effect.
+- Missed weeks and low weeks give advice instead of fixed 85% and 70% cuts: the message states the volume
+  "Regenerate from next Monday" would really restart from (your last four full weeks) as a share of the last
+  loading week.
+- Three weeks at 120% or more of the plan give a note: the plan never speeds up on its own, and regenerating
+  would start from your real volume. Within four weeks of the race the note only says to keep to the plan.
 - Run summaries are backed up; the 5-second activity streams are not.
 
 - Weeks before the first uploaded run count as "no data", not as a break. With fewer than four full weeks of history the baseline is the average of the weeks there are.

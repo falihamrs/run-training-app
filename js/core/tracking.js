@@ -1,6 +1,7 @@
 // Milestone 5: match uploaded runs to planned workouts and measure compliance.
 import { addDays, diffDays, nextMonday } from './dates.js';
 import { generatePlan } from './plan/generate.js';
+import { analyzeHistory } from './history.js';
 
 const isRunWorkout = (w) => w.role !== 'S';
 
@@ -69,19 +70,50 @@ export function compareRun(workout, run) {
 }
 
 /** Advice from completed weeks: low compliance and missed weeks (spec section 10). */
+/**
+ * Advice from how the finished weeks went. Each piece says what "Regenerate from next Monday" would
+ * actually start from, using the same baseline the regeneration uses (your last four full weeks).
+ */
 export function planAdvice(plan, runs, today) {
   const out = [];
   if (!plan) return out;
+  const trail = plan.mode === 'trail';
   const done = plan.weeks.filter((w) => addDays(w.start, 6) < today && w.kind !== 'taper' && !w.locked);
   const prog = done.map((w) => ({ w, p: weekProgress(w, runs, today, plan.mode) }));
+  if (!prog.length) return out;
+
+  // what regeneration would start from, against the last loading week that was planned
+  const h = analyzeHistory(runs, { planStart: nextMonday(today), asOf: today, mode: plan.mode });
+  const lastLoad = [...plan.weeks].filter((w) => w.start <= today && w.kind === 'load').pop() ?? prog.at(-1).w;
+  const loadTarget = trail ? lastLoad.targetHours : lastLoad.targetKm;
+  const base = trail ? h.baselineWeeklyHours ?? 0 : h.baselineWeeklyKm ?? 0;
+  const pct = loadTarget > 0 ? Math.round((100 * base) / loadTarget) : null;
+  const fmt = (v) => (trail ? `${Math.round(v * 4) / 4} h` : `${Math.round(v)} km`);
+  const restart = pct != null
+    ? `Regenerating from next Monday would restart at about ${fmt(base)} a week, ${pct}% of your last loading week (${fmt(loadTarget)})${h.returnFromBreak ? ', reduced because of the break' : ''}, and build up from there.`
+    : 'Regenerating from next Monday rebuilds the plan from what you really run now.';
+
   let missed = 0;
   for (let i = prog.length - 1; i >= 0; i--) { if (prog[i].p.runs === 0) missed++; else break; }
-  if (missed >= 3) out.push({ code: 'missed', level: 'warn', text: `You have missed ${missed} weeks in a row. Regenerate the plan from next Monday so it starts from what you really run now.`, action: 'regen' });
-  else if (missed === 2) out.push({ code: 'missed', level: 'warn', text: 'You missed 2 weeks. Regenerate from next Monday; the plan will resume at about 70% of your last loading week.', action: 'regen' });
-  else if (missed === 1) out.push({ code: 'missed', level: 'warn', text: 'You missed last week. Regenerate from next Monday to resume at about 85% of your last loading week.', action: 'regen' });
+  if (missed >= 1) {
+    out.push({ code: 'missed', level: 'warn', restartPct: pct, text: `You missed ${missed === 1 ? 'last week' : `${missed} weeks in a row`}. ${restart}`, action: 'regen' });
+    return out;
+  }
   const last2 = prog.slice(-2);
-  if (!missed && last2.length === 2 && last2.every((x) => x.p.ratio != null && x.p.ratio < 0.7)) {
-    out.push({ code: 'low', level: 'warn', text: 'You completed under 70% of the planned volume for two weeks in a row. Consider regenerating from next Monday with your current baseline.', action: 'regen' });
+  if (last2.length === 2 && last2.every((x) => x.p.ratio != null && x.p.ratio < 0.7)) {
+    out.push({ code: 'low', level: 'warn', restartPct: pct, text: `You completed under 70% of the planned ${trail ? 'time' : 'distance'} two weeks in a row. ${restart}`, action: 'regen' });
+    return out;
+  }
+  // well above plan: the plan never speeds up by itself, so say so
+  const last3 = prog.slice(-3);
+  if (last3.length === 3 && last3.every((x) => x.p.ratio != null && x.p.ratio >= 1.2)) {
+    const avg = Math.round((100 * last3.reduce((s, x) => s + x.p.ratio, 0)) / 3);
+    const raceSoon = diffDays(today, plan.raceDate) < 28;
+    out.push({
+      code: 'high', level: 'info', restartPct: pct,
+      text: `You ran about ${avg}% of the planned ${trail ? 'time' : 'distance'} for three weeks. The plan does not speed up on its own, to protect you from doing too much too soon. ${raceSoon ? 'With the race this close, keep to the plan and let the taper work.' : `If it feels easy and you are recovering well, regenerating from next Monday would start at about ${fmt(base)} a week instead of the planned ${fmt(loadTarget)}. Otherwise keep to the plan; extra easy running is fine, extra hard running is not.`}`,
+      action: raceSoon ? null : 'regen',
+    });
   }
   return out;
 }
