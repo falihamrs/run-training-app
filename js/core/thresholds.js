@@ -53,10 +53,13 @@ export function addThresholdEntry(list, entry, today) {
     errors.push('A new entry cannot start in the past, so earlier workouts keep their old targets.');
   }
   if (errors.length > 0) return { list, errors };
+  // An entry that updates only one value keeps the other from the entry in force before it,
+  // otherwise a pace-only update would silently remove the heart-rate targets (and the other way round).
+  const prev = thresholdForDate(list.filter((e) => e.effectiveFrom !== entry.effectiveFrom), entry.effectiveFrom);
   const clean = {
     effectiveFrom: entry.effectiveFrom,
-    lthr: entry.lthr ?? null,
-    paceSecPerKm: entry.paceSecPerKm ?? null,
+    lthr: entry.lthr ?? prev?.lthr ?? null,
+    paceSecPerKm: entry.paceSecPerKm ?? prev?.paceSecPerKm ?? null,
     source: entry.source ?? 'manual',
   };
   const without = list.filter((e) => e.effectiveFrom !== clean.effectiveFrom);

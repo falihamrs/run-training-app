@@ -32,8 +32,10 @@ function nearest(days, target, prefer) {
   return [...pool].sort((a, b) => Math.abs(idx(a) - idx(target)) - Math.abs(idx(b) - idx(target)) || idx(b) - idx(a))[0];
 }
 
-function costOf(assign, terrain, trail, anyClimb) {
+function costOf(assign, terrain, trail, anyClimb, avoidHard) {
   let c = 0;
+  // the day after another week's long run should not carry a quality session
+  if (avoidHard && (assign[avoidHard] === 'Q1' || assign[avoidHard] === 'Q2')) c += 50;
   const entries = Object.entries(assign).map(([d, r]) => [idx(d), r]);
   const hard = entries.filter(([, r]) => HARD.has(r)).map(([i]) => i);
   for (let a = 0; a < hard.length; a++) {
@@ -59,7 +61,7 @@ function costOf(assign, terrain, trail, anyClimb) {
   return c;
 }
 
-function search({ days, n, roles, longDay, mediumDay, terrain, trail, anyClimb }) {
+function search({ days, n, roles, longDay, mediumDay, terrain, trail, anyClimb, avoidHard }) {
   const rest = [...roles];
   rest.splice(rest.indexOf('L'), 1);
   if (mediumDay) rest.splice(rest.indexOf('M'), 1);
@@ -77,7 +79,7 @@ function search({ days, n, roles, longDay, mediumDay, terrain, trail, anyClimb }
         seen.add(key);
         const assign = { ...fixed };
         free.forEach((d, i) => { assign[d] = cur[i]; });
-        const cost = costOf(assign, terrain, trail, anyClimb);
+        const cost = costOf(assign, terrain, trail, anyClimb, avoidHard);
         if (!best || cost < best.cost) best = { cost, assign };
         return;
       }
@@ -97,7 +99,7 @@ function search({ days, n, roles, longDay, mediumDay, terrain, trail, anyClimb }
  * @param opts { runs, available: weekday[], longDay, terrain: {Mon..Sun}, trail, b2b, raceWeek }
  * @returns {{assign:{[day]:role}, messages:string[], longDay:string}|null}
  */
-export function placeRoles({ runs, available, longDay, terrain, trail, b2b = false, noLong = false }) {
+export function placeRoles({ runs, available, longDay, terrain, trail, b2b = false, noLong = false, avoidHard = null }) {
   const messages = [];
   const days = WEEKDAYS.filter((d) => available.includes(d));
   const n = Math.min(runs, days.length);
@@ -133,11 +135,11 @@ export function placeRoles({ runs, available, longDay, terrain, trail, b2b = fal
   const attempt = (rl) => {
     const rolesFinal = [...rl];
     const hasL = rolesFinal.includes('L');
-    return search({ days, n, roles: rolesFinal, longDay: L ?? '__none__', mediumDay: M, terrain, trail, anyClimb, hasL });
+    return search({ days, n, roles: rolesFinal, longDay: L ?? '__none__', mediumDay: M, terrain, trail, anyClimb, hasL, avoidHard });
   };
   let result;
   if (noLong) {
-    result = searchNoLong({ days, n, roles, terrain, trail, anyClimb });
+    result = searchNoLong({ days, n, roles, terrain, trail, anyClimb, avoidHard });
   } else {
     result = attempt(roles);
     if (result && result.cost >= 1000 && roles.includes('Q2')) {
@@ -153,7 +155,7 @@ export function placeRoles({ runs, available, longDay, terrain, trail, b2b = fal
   return { assign: result.assign, messages, longDay: L, mediumDay: M, b2b: Boolean(M), runs: n };
 }
 
-function searchNoLong({ days, n, roles, terrain, trail, anyClimb }) {
+function searchNoLong({ days, n, roles, terrain, trail, anyClimb, avoidHard }) {
   let best = null;
   for (const combo of combos(days, n)) {
     const seen = new Set();
@@ -164,7 +166,7 @@ function searchNoLong({ days, n, roles, terrain, trail, anyClimb }) {
         seen.add(key);
         const assign = {};
         combo.forEach((d, i) => { assign[d] = cur[i]; });
-        const cost = costOf(assign, terrain, trail, anyClimb);
+        const cost = costOf(assign, terrain, trail, anyClimb, avoidHard);
         if (!best || cost < best.cost) best = { cost, assign };
         return;
       }

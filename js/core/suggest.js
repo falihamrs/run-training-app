@@ -98,7 +98,11 @@ export function canInsertTest(plan, workout, today) {
 
 export function insertTest(plan, workoutId) {
   const trail = plan.mode === 'trail';
-  const weeks = plan.weeks.map((w) => ({
+  const retotal = (w) => {
+    const rw = w.workouts.filter((x) => x.role !== 'S' && x.role !== 'RACE');
+    return { ...w, plannedMin: rw.reduce((t, x) => t + x.plannedMin, 0), plannedVertM: rw.reduce((t, x) => t + (x.plannedVertM ?? 0), 0) };
+  };
+  const weeks = plan.weeks.map((w) => (w.workouts.some((x) => x.id === workoutId) ? retotal : (x) => x)({
     ...w,
     workouts: w.workouts.map((x) => {
       if (x.id !== workoutId) return x;

@@ -1,5 +1,5 @@
 // Section 4: feasibility check, peak targets and plan length.
-import { diffDays, mondayOnOrBefore } from '../dates.js';
+import { diffDays, mondayOnOrBefore, weekdayOf } from '../dates.js';
 import { kmEffort } from '../race.js';
 import { thresholdForDate, earliestThreshold } from '../thresholds.js';
 import { formatDuration } from '../units.js';
@@ -41,7 +41,9 @@ export function checkFeasibility(settings, history, { effectiveRuns, allowShort 
   }
   if (messages.some((m) => m.level === 'block')) return { status: 'BLOCK', messages };
 
-  const params = { W, startMonday, raceMonday, trail, xp, entry };
+  const earlyRace = ['Mon', 'Tue'].includes(weekdayOf(race.date));
+  const Wt = W - (earlyRace ? 1 : 0); // training weeks: a Monday or Tuesday race leaves its own week empty
+  const params = { W, startMonday, raceMonday, trail, xp, entry, earlyRace };
   if (history.returnFromBreak) warn('break', 'You are returning from a break, so the plan starts from a reduced baseline.');
 
   if (trail) {
@@ -60,7 +62,7 @@ export function checkFeasibility(settings, history, { effectiveRuns, allowShort 
     const taperWeeks = effort >= 25 ? 2 : 1;
     Object.assign(params, { effort, cls, TrMin, TrRange, peakHours, peakVert, peakLongMin, taperWeeks, minPerEffort });
 
-    if (W < cls.block) (allowShort ? warn : block)('weeks', `Only ${W} weeks until the race. A race of ${cls.label} needs at least ${cls.block} weeks.`);
+    if (Wt < cls.block) (allowShort ? warn : block)('weeks', `Only ${Wt} weeks until the race. A race of ${cls.label} needs at least ${cls.block} weeks.`);
     if (cls.entry) {
       const [h, longH] = cls.entry;
       if ((history.baselineWeeklyHours ?? 0) < h || (history.longestRunMin ?? 0) < longH * 60) {
@@ -68,7 +70,7 @@ export function checkFeasibility(settings, history, { effectiveRuns, allowShort 
       }
     }
     if (messages.some((m) => m.level === 'block')) return { status: 'BLOCK', messages, params };
-    if (W < cls.rec) warn('weeks', `${W} weeks is below the recommended ${cls.rec} weeks.`);
+    if (Wt >= cls.block && Wt < cls.rec) warn('weeks', `${Wt} weeks is below the recommended ${cls.rec} weeks.`);
 
     const vol = buildVolume(params, history, settings);
     params.volume = vol;
@@ -100,16 +102,16 @@ export function checkFeasibility(settings, history, { effectiveRuns, allowShort 
     const taperWeeks = t.taper.length;
     Object.assign(params, { cat, table: t, predictedSec: predicted, peakKm, peakLong, taperWeeks });
 
-    if (W < t.block) (allowShort ? warn : block)('weeks', `Only ${W} weeks until the race. A ${t.label} needs at least ${t.block} weeks.`);
+    if (Wt < t.block) (allowShort ? warn : block)('weeks', `Only ${Wt} weeks until the race. A ${t.label} needs at least ${t.block} weeks.`);
     if (t.entry) {
       const [km, longKm] = t.entry;
       if (history.baselineWeeklyKm < km || history.longestRunKm < longKm) {
-        const text = `For a ${t.label} you should already run ${km} km a week with a longest run of ${longKm} km. Build a base first or pick a shorter race.`;
+        const text = `For a ${t.label} you should already run ${km} km a week with a longest run of ${longKm} km. ${overrideEntry && t.entryBlock ? 'You chose to build the plan anyway, so progress carefully and cut back at any sign of injury.' : 'Build a base first or pick a shorter race.'}`;
         if (t.entryBlock && !overrideEntry) block('entry', text); else warn('entry', text);
       }
     }
     if (messages.some((m) => m.level === 'block')) return { status: 'BLOCK', messages, params };
-    if (W < t.rec) warn('weeks', `${W} weeks is below the recommended ${t.rec} weeks.`);
+    if (Wt >= t.block && Wt < t.rec) warn('weeks', `${Wt} weeks is below the recommended ${t.rec} weeks.`);
     const vol = buildVolume(params, history, settings);
     params.volume = vol;
     const reach = Math.max(...vol.weeks.filter((w) => w.kind !== 'taper').map((w) => w.targetKm));

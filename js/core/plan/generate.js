@@ -58,6 +58,10 @@ export function generatePlan(settingsIn, history, { today, id = 'main', now = nu
     return layoutCache.get(key);
   };
 
+  // Race-like weeks follow a normal week, so their quality session should avoid the day after the normal long run.
+  const normalLayout = layoutFor('normal', { runs: v.effectiveRunsPerWeek, available, b2b: false });
+  const afterLong = normalLayout?.longDay ? WEEKDAYS[(WEEKDAYS.indexOf(normalLayout.longDay) + 1) % 7] : null;
+
   const state = {
     ptr: { THR: 0, VO2: 0, CLB: 0, HIL: 0, DWN: 0, FAR: 0, TMP: 0, HIKE: 0, MP: 0 },
     prevLong: trail ? Math.min(history.longestRunMin ?? 0, 9999) : history.longestRunKm ?? 0,
@@ -70,6 +74,8 @@ export function generatePlan(settingsIn, history, { today, id = 'main', now = nu
   for (const vw of vol.weeks) {
     const start = addDays(params.startMonday, 7 * (vw.n - 1));
     const isRaceWeek = vw.n === nWeeks;
+    const finalPrep = params.earlyRace && vw.n === nWeeks - 1;
+    const raceLike = isRaceWeek || finalPrep; // weeks that follow race-week rules
     const down = vw.kind === 'down';
     state.phaseIdx[vw.phase] += 1;
     const pIdx = state.phaseIdx[vw.phase];
@@ -77,7 +83,7 @@ export function generatePlan(settingsIn, history, { today, id = 'main', now = nu
 
     // ---- layout ----
     const b2bWeek = trail && vw.phase === 'peak' && pIdx % 2 === 0 && !down && params.TrMin >= 240 && vw.targetHours >= 4;
-    const layoutOpts = { runs: v.effectiveRunsPerWeek, available, b2b: b2bWeek };
+    const layoutOpts = { runs: v.effectiveRunsPerWeek, available, b2b: b2bWeek, avoidHard: raceLike ? afterLong : null };
     let layout;
     if (isRaceWeek) {
       let raceAvail = available.filter((d) => WEEKDAYS.indexOf(d) < raceIdx);
@@ -87,6 +93,15 @@ export function generatePlan(settingsIn, history, { today, id = 'main', now = nu
       let raceRuns = layoutOpts.runs;
       if (withoutShake.length >= 3) { raceAvail = withoutShake; raceRuns = Math.max(2, layoutOpts.runs - 1); }
       layout = layoutFor(`race-${raceWeekday}`, { ...layoutOpts, available: raceAvail, runs: Math.min(raceRuns, Math.max(2, raceAvail.length)), noLong: true, b2b: false });
+    } else if (finalPrep) {
+      // Race early next week: this is the last training week, laid out like a race week (no long run).
+      let avail = available;
+      let prepRuns = layoutOpts.runs;
+      if (raceIdx === 0) {
+        const withoutShake = available.filter((d) => d !== 'Sun');
+        if (withoutShake.length >= 3 && available.includes('Sun')) { avail = withoutShake; prepRuns = Math.max(2, layoutOpts.runs - 1); }
+      }
+      layout = layoutFor('final-prep', { ...layoutOpts, available: avail, runs: Math.min(prepRuns, Math.max(2, avail.length)), noLong: true, b2b: false });
     } else {
       layout = layoutFor(b2bWeek ? 'b2b' : 'normal', layoutOpts);
     }
@@ -180,7 +195,7 @@ export function generatePlan(settingsIn, history, { today, id = 'main', now = nu
       }
       if (phase === 'taper') {
         if (slot === 'Q2') return null;
-        return cat === '5k' || cat === '10k' ? { code: 'RP', steps: W.racePaceSteps(cat, goalPace).slice(0, 3).map((s) => (s.kind === 'repeat' ? { ...s, reps: Math.max(2, Math.ceil(s.reps / 2)) } : s)).concat([W.COOL]) } : { code: 'THR', steps: W.thresholdSteps(0) };
+        return cat === '5k' || cat === '10k' ? { code: 'RP', steps: W.racePaceSteps(cat, goalPace).slice(0, 2).map((s) => (s.kind === 'repeat' ? { ...s, reps: Math.max(2, Math.ceil(s.reps / 2)) } : s)).concat([W.COOL]) } : { code: 'THR', steps: W.thresholdSteps(0) };
       }
       if (phase === 'build') {
         if (slot === 'Q1') { const r = thr(nextRung('THR', W.THR_LADDER.length)); bump('THR'); return { code: 'THR', steps: W.thresholdSteps(r) }; }
@@ -243,14 +258,17 @@ export function generatePlan(settingsIn, history, { today, id = 'main', now = nu
     let medMin = medDay ? Math.max(30, round5((trail ? 0.5 : 0.5) * longMin)) : 0;
 
     // fit the week: shrink quality sessions, drop a small easy run, and spread any slack in back-to-back weeks
-    const fitMin = trail ? weekMin : Math.round((weekKm * easyPace) / 60);
-    if (!isRaceWeek) {
+    // the shakeout is added after the loop, so race-like weeks budget for it here
+    const shakeDayName = WEEKDAYS[(raceIdx + 6) % 7];
+    const shakeMin = available.includes(shakeDayName) && ((isRaceWeek && raceIdx >= 1) || (finalPrep && raceIdx === 0)) ? W.totalMinutes(W.shakeoutSteps()) : 0;
+    const fitMin = Math.max(0, (trail ? weekMin : Math.round((weekKm * easyPace) / 60)) - shakeMin);
+    {
       const MIN_EASY = 24; // 20 min plus strides
       const qSlots = () => ['Q1', 'Q2'].filter((k) => quality[k]?.steps);
       const easyList = () => WEEKDAYS.filter((d) => assign[d] === 'E' || assign[d] === 'R');
       const fixed = () => longMin + medMin;
       const need = () => fixed() + qSlots().length * 30 + easyList().length * MIN_EASY;
-      while (Object.keys(assign).length > 2 && need() > 1.1 * fitMin) {
+      while (Object.keys(assign).length > (raceLike ? 1 : 2) && need() > 1.1 * fitMin) {
         const list = easyList();
         if (list.length) {
           const d = list.filter((x) => assign[x] === 'R').pop() ?? list[list.length - 1];
@@ -281,8 +299,7 @@ export function generatePlan(settingsIn, history, { today, id = 'main', now = nu
 
     // time available for easy runs
     let totalMinTarget;
-    if (trail) totalMinTarget = weekMin;
-    else totalMinTarget = Math.round((weekKm * easyPace) / 60);
+    totalMinTarget = fitMin;
     const roleOfDay = Object.fromEntries(Object.entries(assign));
     let easyDays = Object.keys(roleOfDay).filter((d) => roleOfDay[d] === 'E' || roleOfDay[d] === 'R');
     let remaining = totalMinTarget - longMin - medMin - (quality.Q1 ? q1Min : 0) - (quality.Q2 ? q2Min : 0);
@@ -307,11 +324,11 @@ export function generatePlan(settingsIn, history, { today, id = 'main', now = nu
       const capEasy = Math.max(floorMin, round5(longMin));
       let cut = 0;
       for (const d of easyDays) if (sizes[d] > capEasy) { cut += sizes[d] - capEasy; sizes[d] = capEasy; }
-      if (!isRaceWeek && cut > Math.max(15, 0.08 * totalMinTarget)) {
+      if (!raceLike && cut > Math.max(15, 0.08 * totalMinTarget)) {
         flags.push(`About ${round5(cut)} min of this week's target was left out so that no easy run is longer than the long run. More runs a week would fit it.`);
       }
     }
-    if (isRaceWeek) for (const d of easyDays) sizes[d] = Math.min(sizes[d], 45);
+    if (raceLike) for (const d of easyDays) sizes[d] = Math.min(sizes[d], 45);
 
     // ---- climbing allocation (trail) ----
     const alloc = {};
@@ -333,7 +350,7 @@ export function generatePlan(settingsIn, history, { today, id = 'main', now = nu
         placed += alloc[r.day];
       }
       const lost = Math.round(vert - placed);
-      if (vert > 0 && !isRaceWeek && vw.phase !== 'taper' && lost > Math.max(50, 0.05 * vert)) {
+      if (vert > 0 && !raceLike && vw.phase !== 'taper' && lost > Math.max(50, 0.05 * vert)) {
         flags.push(`${lost} m of the weekly climbing could not be placed on the available days.`);
       }
     }
@@ -413,7 +430,7 @@ export function generatePlan(settingsIn, history, { today, id = 'main', now = nu
 
     // strength
     const sPlanned = (() => {
-      if (isRaceWeek) return 0;
+      if (raceLike) return 0;
       if (vw.phase === 'peak') return Math.min(strengthPerWeek, 1);
       if (vw.phase === 'taper') return Math.min(strengthPerWeek, 1);
       return strengthPerWeek;
@@ -448,7 +465,7 @@ export function generatePlan(settingsIn, history, { today, id = 'main', now = nu
 
     const runW = kept.filter((w) => w.role !== 'S');
     weeks.push({
-      n: vw.n, start, phase: vw.phase, kind: vw.kind, targetKm: vw.targetKm ?? null, targetHours: vw.targetHours ?? null, targetVertM: isRaceWeek && trail ? 0 : vw.targetVertM ?? null,
+      n: vw.n, start, phase: vw.phase, kind: vw.kind, targetKm: vw.targetKm ?? null, targetHours: vw.targetHours ?? null, targetVertM: raceLike && trail ? 0 : vw.targetVertM ?? null,
       reason: vw.reason, flags, workouts: kept,
       plannedMin: runW.reduce((s, w) => s + w.plannedMin, 0),
       plannedKm: trail ? null : Math.round(runW.reduce((s, w) => s + (w.plannedKm ?? 0), 0) * 10) / 10,
@@ -542,6 +559,7 @@ export function generatePlan(settingsIn, history, { today, id = 'main', now = nu
     race: { ...race, kmEffort: trail ? params.effort : null, expectedDurationMin: trail ? params.TrRange : null, predictedSec: trail ? null : params.predictedSec },
     goalPaceSecPerKm: goalPace, easyPaceSecPerKm: easyPace, startDate: params.startMonday, raceDate,
     phases: vol.phases, peak: { km: vol.peakKm, hours: vol.peakHours, vertM: vol.peakVertM, longRunMin: params.peakLongMin ?? null, longRunKm: params.peakLong ?? null },
+    messages, // kept with the plan so the warnings are still shown after a reload
     settingsSnapshot: { runsPerWeek: v.effectiveRunsPerWeek, longRunDay: schedule.longRunDay, dayTerrain: terrain, unavailableDays: schedule.unavailableDays ?? [], experience: settings.athlete.experience },
     weeks,
   };

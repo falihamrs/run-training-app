@@ -89,6 +89,15 @@ npm test
   four weeks of actual running, which has the same effect.
 - Run summaries are backed up; the 5-second activity streams are not.
 
+- Weeks before the first uploaded run count as "no data", not as a break. With fewer than four full weeks of history the baseline is the average of the weeks there are.
+- Plans longer than 24 weeks hold the starting volume only for weeks the ramp does not need: the build must still reach its peak targets by the start of the peak phase.
+- A race on a Monday or Tuesday leaves its own week empty, so the taper moves one week earlier and the week before is laid out like a race week.
+- Weekly volume always grows by at least 0.25 h (trail) or 1 km (road) per loading week, so low starting volumes do not stall on rounding.
+- Easy runs are never longer than the long run, quality sessions shrink to fit small weeks, and runs are dropped (down to two) when a week is too small for the chosen number.
+- A threshold entry with only LTHR or only pace keeps the other value from the entry before it.
+- An activity's date uses the browser's time zone at the time of the run; if the GPS shows it was recorded more than three hours of time zone away, the run's own zone is used.
+- Trail races above 45 km or 75 km-effort stay out of scope: the training tables stop there.
+
 ## Data and backups
 
 Data is stored in your browser's IndexedDB, on one device. Clearing browser data erases it, so

@@ -46,7 +46,9 @@ export function weekProgress(week, runs, today, mode) {
   const actualKm = inWeek.reduce((s, r) => s + r.distanceKm, 0);
   const actualMin = inWeek.reduce((s, r) => s + r.movingSec / 60, 0);
   const actualVertM = inWeek.reduce((s, r) => s + r.gainM, 0);
-  const planned = mode === 'trail' ? week.plannedMin : week.plannedKm;
+  // the week totals leave the race out, so add it back when comparing with what was actually run
+  const race = week.workouts?.find((w) => w.role === 'RACE');
+  const planned = (mode === 'trail' ? week.plannedMin : week.plannedKm) + (race ? (mode === 'trail' ? race.plannedMin : race.plannedKm) : 0);
   const actual = mode === 'trail' ? actualMin : actualKm;
   return {
     actualKm, actualMin, actualVertM, runs: inWeek.length,

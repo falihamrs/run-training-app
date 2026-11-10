@@ -248,3 +248,52 @@ test('climbing never exceeds 400 m per hour in any session', () => {
     for (const w of r.plan.weeks.flatMap((x) => x.workouts)) if (w.role !== 'RACE' && w.plannedVertM) assert.ok(w.plannedVertM <= (400 * w.plannedMin) / 60 + 0.5, `${w.id} ${w.plannedVertM} m in ${w.plannedMin} min`);
   }
 });
+
+test('a Monday race still gets a taper: the week before is race-like and ends with the shakeout', () => {
+  for (const o of [{ distanceKm: 10, runs: 5, weeks: 10 }, { ...trailOpts, distanceKm: 15, gain: 600, runs: 4, weeks: 10 }]) {
+    const s = settingsFor(o);
+    s.race.date = addDays(s.race.date, -6); // a Monday
+    const p = generatePlan(s, hist(), { today: TODAY, overrideEntry: true, allowShort: true }).plan;
+    const prep = p.weeks.at(-2);
+    const peakMin = Math.max(...p.weeks.map((w) => w.plannedMin));
+    assert.equal(prep.phase, 'taper');
+    assert.ok(prep.plannedMin <= 0.8 * peakMin, `${prep.plannedMin} vs peak ${peakMin}`);
+    assert.ok(!prep.workouts.some((w) => w.role === 'L'));
+    assert.equal(prep.workouts.filter((w) => w.role !== 'S').at(-1).code, 'SHK');
+    assert.deepEqual(p.weeks.at(-1).workouts.map((w) => w.code), ['RACE']);
+  }
+});
+
+test('the 5 km and 10 km taper session has one warm-up and one cool-down', () => {
+  const p = generatePlan(settingsFor({ distanceKm: 5, runs: 5, weeks: 8 }), hist(), { today: TODAY }).plan;
+  const q = p.weeks.at(-1).workouts.find((w) => w.code === 'RP');
+  assert.ok(q);
+  assert.equal(q.steps.filter((s) => s.kind === 'cooldown').length, 1);
+  assert.equal(q.steps.filter((s) => s.kind === 'warmup').length, 1);
+});
+
+test('long plans hold the baseline only for weeks the ramp does not need', () => {
+  const low = generatePlan(settingsFor({ ...trailOpts, distanceKm: 25, gain: 2300, runs: 4, weeks: 32 }), hist({ baselineWeeklyHours: 1.25, longestRunMin: 60, baselineWeeklyVertM: 40 }), { today: TODAY, overrideEntry: true }).plan;
+  const holdLow = low.weeks.filter((w) => w.kind === 'hold').length;
+  assert.ok(holdLow < 8, `${holdLow} hold weeks`);
+  const firstPeakPhase = low.weeks.find((w) => w.phase === 'peak').n;
+  const firstAtPeak = low.weeks.find((w) => w.targetHours >= low.peak.hours).n;
+  assert.ok(firstAtPeak <= firstPeakPhase, `peak hours first reached in week ${firstAtPeak}, peak phase starts in week ${firstPeakPhase}`);
+  const fit = generatePlan(settingsFor({ ...trailOpts, distanceKm: 25, gain: 2300, runs: 5, weeks: 32 }), hist({ baselineWeeklyHours: 6, longestRunMin: 200, baselineWeeklyVertM: 1500 }), { today: TODAY }).plan;
+  assert.equal(fit.weeks.filter((w) => w.kind === 'hold').length, 8);
+});
+
+test('plans of one or two weeks still produce finite targets', () => {
+  for (const weeks of [1, 2, 3]) {
+    const p = generatePlan(settingsFor({ distanceKm: 42.195, runs: 4, weeks }), hist(), { today: TODAY, overrideEntry: true, allowShort: true }).plan;
+    assert.ok(p, `no plan for ${weeks} weeks`);
+    for (const w of p.weeks) assert.ok(Number.isFinite(w.targetKm) && Number.isFinite(w.plannedMin), `week ${w.n}`);
+    assert.equal(p.weeks.at(-1).phase, 'taper');
+  }
+});
+
+test('warnings are stored with the plan', () => {
+  const r = generatePlan(settingsFor({ ...trailOpts, distanceKm: 25, gain: 2300, runs: 4, weeks: 20 }), hist({ baselineWeeklyHours: 1.1, longestRunMin: 45 }), { today: TODAY, overrideEntry: true });
+  assert.ok(r.plan.messages.some((m) => m.code === 'entry'));
+  assert.equal(r.plan.entryOverridden, true);
+});

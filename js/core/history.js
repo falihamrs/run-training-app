@@ -101,13 +101,24 @@ export function analyzeHistory(runsIn, { planStart, asOf, lthr = null, selfRepor
   }
   result.weekly = weeks;
 
-  const last4 = weeks.slice(-4);
+  // Weeks before the first uploaded run hold no information, so they are neither a break nor part of the average.
+  const covered = weeks.filter((w) => w.start >= first);
+  const last4 = covered.slice(-4);
   const meanOf = (k) => mean(last4.map((w) => w[k]));
   let km = meanOf('km'), hours = meanOf('hours'), vert = meanOf('vertM');
   const lastRun = runs.at(-1);
   result.weeksSinceLastRun = Math.floor(diffDays(lastRun.date, refEnd) / 7);
+  if (!last4.length) {
+    const recent = runs.filter((r) => diffDays(r.date, lastRun.date) < 7);
+    km = recent.reduce((s, r) => s + r.distanceKm, 0);
+    hours = recent.reduce((s, r) => s + r.movingSec, 0) / 3600;
+    vert = recent.reduce((s, r) => s + r.gainM, 0);
+    result.notes.push('Less than one full week of history, so the baseline is the runs uploaded so far.');
+  } else if (last4.length < 4) {
+    result.notes.push(`Only ${last4.length} full week${last4.length === 1 ? '' : 's'} of history, so the baseline is less certain. It firms up as you add runs.`);
+  }
   const zeroWeeksLast4 = last4.filter((w) => w.runs === 0).length;
-  const nonZeroLast4 = 4 - zeroWeeksLast4;
+  const nonZeroLast4 = last4.length - zeroWeeksLast4;
   const nonZeroAll = weeks.filter((w) => w.runs > 0);
   if (result.weeksSinceLastRun >= 4 || (zeroWeeksLast4 >= 1 && nonZeroLast4 >= 2) || zeroWeeksLast4 >= 2) {
     result.returnFromBreak = true;

@@ -84,3 +84,19 @@ test('the optional test replaces a Build or Peak Q1, once per 8 weeks', () => {
 test('test result from a run', () => {
   assert.deepEqual(testResultFromRun(hard(1, { hr: 171.4, pace: 301.6 })), { paceSecPerKm: 302, lthr: 171 });
 });
+
+test('inserting a test keeps the week totals in step, and shrinking a session shortens the repetitions last', async () => {
+  const W = await import('../js/core/plan/workouts.js');
+  const p = generatePlan(settingsFor({ distanceKm: 21.1, runs: 5, weeks: 16 }), hist(), { today: '2026-12-28' }).plan;
+  const target = p.weeks.flatMap((w) => w.workouts).find((w) => canInsertTest(p, w, '2026-12-28'));
+  const p2 = insertTest(p, target.id);
+  const wk = p2.weeks.find((w) => w.n === target.week);
+  assert.equal(wk.plannedMin, wk.workouts.filter((x) => x.role !== 'S' && x.role !== 'RACE').reduce((a, x) => a + x.plannedMin, 0));
+  const rp = W.racePaceSteps('half', 300);
+  const small = W.fitSteps(rp, 30);
+  assert.ok(W.totalMinutes(small) < W.totalMinutes(W.fitSteps(rp, 60)));
+  const rep = small.find((s) => s.kind === 'repeat');
+  assert.ok(rep.work.durationMin >= 7.5 && rep.work.durationMin < 15);
+  assert.equal(rep.work.note, undefined);
+  assert.equal(rp.find((s) => s.kind === 'repeat').work.durationMin, 15); // the original is untouched
+});

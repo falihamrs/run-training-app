@@ -103,3 +103,18 @@ test('race to threshold pace uses the one-hour pace, not a fixed factor', () => 
   const fast = oneHourPace(2400, 10); // 40:00 10 km
   assert.ok(fast > 240 && fast < 255 * 1.05);
 });
+
+test('a runner with two weeks of history is not treated as returning from a break', () => {
+  const runs = [run('2026-10-27'), run('2026-10-29'), run('2026-11-01', { km: 10 }), run('2026-11-04'), run('2026-11-08', { km: 10 })];
+  const h = analyzeHistory(runs, { planStart: '2026-11-16', asOf: '2026-11-10', mode: 'trail' });
+  assert.equal(h.returnFromBreak, false);
+  assert.ok(Math.abs(h.baselineWeeklyKm - 22) < 0.01, `baseline ${h.baselineWeeklyKm}`); // (26 + 18) / 2
+  assert.ok(h.notes.some((n) => /Only 2 full weeks/.test(n)));
+  // a real gap inside the covered weeks is still a break
+  const gap = analyzeHistory([run('2026-09-15'), run('2026-09-22'), run('2026-11-04')], { planStart: '2026-11-16', asOf: '2026-11-10', mode: 'trail' });
+  assert.equal(gap.returnFromBreak, true);
+  // runs only in the current, unfinished week
+  const fresh = analyzeHistory([run('2026-11-09'), run('2026-11-10')], { planStart: '2026-11-16', asOf: '2026-11-10', mode: 'trail' });
+  assert.equal(fresh.returnFromBreak, false);
+  assert.ok(Math.abs(fresh.baselineWeeklyKm - 16) < 0.01);
+});

@@ -5,14 +5,14 @@ import { analyzeHistory } from '../core/history.js';
 import { formatDuration, formatPace, parsePace } from '../core/units.js';
 import { prescribedSnapshot } from '../core/targets.js';
 import { runsByWorkout, suggestMatch } from '../core/tracking.js';
-import { diffDays } from '../core/dates.js';
+import { activityTzOffsetMin, diffDays } from '../core/dates.js';
 import { formatBytes, integrityReport, runsInRange } from '../core/housekeeping.js';
 import { esc } from './util.js';
 
 const fmtKm = (v) => (v == null ? '–' : v.toFixed(1));
 const CONF = { high: 'High', medium: 'Medium', low: 'Low' };
 
-export function mountHistory(el, { storage, getSettings, today, tzOffsetMin = -new Date().getTimezoneOffset(), onUseThreshold, getPlan = () => null, getContext = () => null, onMatchChange = () => {} }) {
+export function mountHistory(el, { storage, getSettings, today, tzOffsetMin = null, onUseThreshold, getPlan = () => null, getContext = () => null, onMatchChange = () => {} }) {
   const state = { runs: [], selfReport: null, results: [], busy: false, acceptOther: false, error: null, hk: { from: '', to: '', keepRaces: true, confirm: false, report: null, usage: null, notice: null } };
 
   async function reload() {
@@ -33,7 +33,7 @@ export function mountHistory(el, { storage, getSettings, today, tzOffsetMin = -n
   function summary(opts = {}) {
     const s = getSettings();
     const lthr = [...(s.thresholds || [])].sort((a, b) => b.effectiveFrom.localeCompare(a.effectiveFrom)).find((t) => t.lthr)?.lthr ?? null;
-    return analyzeHistory(state.runs, { planStart: opts.planStart ?? s.schedule.startDate, asOf: today, lthr, selfReport: state.selfReport, mode: s.race.mode, tzOffsetMin });
+    return analyzeHistory(state.runs, { planStart: opts.planStart ?? s.schedule.startDate, asOf: today, lthr, selfReport: state.selfReport, mode: s.race.mode, tzOffsetMin: tzOffsetMin ?? -new Date().getTimezoneOffset() });
   }
 
   function uploadCard() {
@@ -173,7 +173,10 @@ export function mountHistory(el, { storage, getSettings, today, tzOffsetMin = -n
           const isRun = /run|trail/.test(sport) || (state.acceptOther && (sport === 'other' || sport === 'unknown'));
           if (!isRun) { rejected.push(`sport "${act.sport}"`); continue; }
           act.sport = 'Running';
-          const r = analyzeActivity(act, { tzOffsetMin, fileName: file.name });
+          // the offset in force when the run happened (daylight saving), or the run's own zone if recorded far away
+          const lon = act.points?.find((pt) => pt.lon != null)?.lon ?? null;
+          const tz = tzOffsetMin ?? activityTzOffsetMin(-new Date(act.startTime).getTimezoneOffset(), lon);
+          const r = analyzeActivity(act, { tzOffsetMin: tz, fileName: file.name });
           if (!r.ok) { rejected.push(r.error); continue; }
           const res = await storage.addRun(r.run, r.stream);
           if (res.added) {

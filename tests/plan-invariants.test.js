@@ -12,7 +12,7 @@ const HISTS = [hist(), hist({ baselineWeeklyKm: 10, baselineWeeklyHours: 1.1, lo
 const HARD = new Set(['Q1', 'Q2', 'L', 'RACE']);
 
 function* cases() {
-  for (const rc of RACES) for (const runs of [3, 4, 6]) for (const weeks of [6, 16, 32]) for (const shift of [0, -1, -5]) for (const h of HISTS) for (const unavailable of [[], ['Mon', 'Thu']]) {
+  for (const rc of RACES) for (const runs of [3, 4, 6]) for (const weeks of [2, 6, 16, 32]) for (const shift of [0, -1, -5, -6]) for (const h of HISTS) for (const unavailable of [[], ['Mon', 'Thu']]) {
     const terrains = rc.mode === 'trail' ? [TERRAIN, FLAT] : [TERRAIN];
     for (const terrain of terrains) {
       const s = settingsFor({ ...rc, runs, weeks, terrain, unavailable });
@@ -60,6 +60,13 @@ test('every generated plan satisfies the structural invariants', () => {
     const hard = p.weeks.flatMap((w) => w.workouts).filter((x) => HARD.has(x.role)).sort((a, b) => (a.date < b.date ? -1 : 1));
     for (let i = 1; i < hard.length; i++) assert.ok(diffDays(hard[i - 1].date, hard[i].date) >= 2, `${c.label}: ${hard[i - 1].id} then ${hard[i].id}`);
     assert.equal(p.weeks.at(-1).workouts.filter((x) => x.role === 'RACE').length, 1);
+    for (const w of p.weeks) assert.ok([w.targetKm, w.targetHours, w.targetVertM].every((x) => x == null || Number.isFinite(x)), `${c.label} W${w.n}: target is not a number`);
+    const order = ['base', 'build', 'peak', 'taper'];
+    for (let i = 1; i < p.weeks.length; i++) assert.ok(order.indexOf(p.weeks[i].phase) >= order.indexOf(p.weeks[i - 1].phase), `${c.label}: phases out of order`);
+    // the last real training week must be clearly lighter than the peak
+    const lastTrain = [...p.weeks].reverse().find((w) => w.workouts.some((x) => x.role !== 'RACE' && x.role !== 'S' && x.code !== 'SHK'));
+    const peakMin = Math.max(...p.weeks.map((w) => w.plannedMin));
+    if (lastTrain && p.weeks.length >= 6 && peakMin > 150) assert.ok(lastTrain.plannedMin <= 0.85 * peakMin, `${c.label}: no taper (${lastTrain.plannedMin} vs ${peakMin})`);
     const shk = p.weeks.flatMap((w) => w.workouts).filter((x) => x.code === 'SHK');
     assert.ok(shk.length <= 1 && shk.every((x) => x.date === addDays(p.raceDate, -1)), `${c.label}: shakeout`);
   }

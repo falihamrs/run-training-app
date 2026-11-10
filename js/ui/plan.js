@@ -6,6 +6,7 @@ import { WEEKDAYS, diffDays, nextMonday } from '../core/dates.js';
 import { compareRun, planAdvice, regenerateFrom, runsByWorkout, runsToUnlink, weekProgress, workoutStatus } from '../core/tracking.js';
 import { formatDuration } from '../core/units.js';
 import { canInsertTest, climbTrend, goalAdvice, insertTest, nextWorkoutDate, suggestThresholdUpdate, testResultFromRun } from '../core/suggest.js';
+import { earliestThreshold, thresholdForDate } from '../core/thresholds.js';
 import { esc } from './util.js';
 
 const PHASE_LABEL = { base: 'Base', build: 'Build', peak: 'Peak', taper: 'Taper' };
@@ -126,11 +127,11 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
       }
     }
     if (p.mode === 'trail') {
-      const cur = s.thresholds.filter((e) => e.lthr).at(-1);
+      const cur = thresholdForDate(s.thresholds, today) ?? earliestThreshold(s.thresholds);
       const ct = climbTrend(state.runs, cur?.lthr, today);
       if (ct?.significant) parts.push(`<p class="notice ok">Your climbing speed at threshold effort rose ${ct.pct}% over 4 weeks (${ct.beforeMh} → ${ct.recentMh} m/h).</p>`);
     } else {
-      const cur = s.thresholds.filter((e) => e.paceSecPerKm).at(-1);
+      const cur = thresholdForDate(s.thresholds, today) ?? earliestThreshold(s.thresholds);
       const ga = goalAdvice({ goalTimeSec: s.race.goalTimeSec, thresholdPaceSecPerKm: cur?.paceSecPerKm, distanceKm: s.race.distanceKm });
       if (ga) parts.push(`<p class="notice ok">Your threshold now predicts ${esc(formatDuration(ga.predictedSec))}, at least 3% faster than your goal. You could set a goal near ${esc(formatDuration(ga.suggestedGoalSec))} in Settings. It is never changed automatically.</p>`);
     }
@@ -198,7 +199,7 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
       r = regenerateFrom(state.plan, settings, history, { today, now });
     } else {
       const history = await getHistory();
-      r = generatePlan(settings, history, { today, id: 'main', now, overrideEntry: override });
+      r = generatePlan(settings, history, { today, id: 'main', now, overrideEntry: override || Boolean(state.plan?.entryOverridden) });
     }
     } catch (err) {
       console.error(err);
@@ -230,6 +231,7 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
     if (!state.loaded && storage) {
       state.plan = await storage.loadPlan();
       state.loaded = true;
+      if (state.plan && !state.messages.length) state.messages = state.plan.messages ?? [];
     }
     if (storage) { state.runs = await storage.listRuns(); state.suggestState = await storage.loadSuggestState(); state.backup = await getBackupInfo(); }
     render();
@@ -307,7 +309,7 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
 
   async function refreshRuns() { if (storage) state.runs = await storage.listRuns(); }
 
-  if (storage) storage.loadPlan().then((p) => { state.plan = p; state.loaded = true; if (p) render(); }).catch(() => {});
+  if (storage) storage.loadPlan().then((p) => { state.plan = p; state.loaded = true; if (p) { state.messages = p.messages ?? []; render(); } }).catch(() => {});
 
   return { refresh, getPlan: () => state.plan };
 }

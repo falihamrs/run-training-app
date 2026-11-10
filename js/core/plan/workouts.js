@@ -137,5 +137,12 @@ export function fitSteps(steps, maxMin) {
   }
   if (main && main.kind !== 'repeat') while (main.durationMin > 10 && total() > maxMin) main.durationMin -= 1;
   while (main?.kind === 'repeat' && main.reps > 2 && total() > maxMin) main.reps -= 1;
+  // last resort: shorter repetitions, down to half their length
+  if (main?.kind === 'repeat' && main.work.durationMin && total() > maxMin) {
+    const floor = Math.max(1, main.work.durationMin / 2);
+    const work = { ...main.work };
+    while (work.durationMin - 0.5 >= floor && total() > maxMin) { work.durationMin -= 0.5; main.work = work; }
+    if (work.durationMin !== steps.find((x) => x.kind === 'repeat').work.durationMin) { delete work.note; main.work = work; }
+  }
   return s;
 }

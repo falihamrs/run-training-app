@@ -59,3 +59,15 @@ test('only entries starting today or later can be removed', () => {
   assert.equal(removeThresholdEntry(list, '2026-12-15', today).length, 1);
   assert.equal(defaultEffectiveFrom(today), '2026-11-10');
 });
+
+test('an entry with only one value keeps the other from the entry before it', async () => {
+  const { addThresholdEntry: add, thresholdForDate: at } = await import('../js/core/thresholds.js');
+  const first = add([], { effectiveFrom: '2026-11-01', lthr: 171, paceSecPerKm: 386 }, '2026-11-10').list;
+  const paceOnly = add(first, { effectiveFrom: '2026-11-20', lthr: null, paceSecPerKm: 370 }, '2026-11-10');
+  assert.deepEqual(paceOnly.errors, []);
+  assert.equal(at(paceOnly.list, '2026-12-01').lthr, 171);
+  assert.equal(at(paceOnly.list, '2026-12-01').paceSecPerKm, 370);
+  const hrOnly = add(paceOnly.list, { effectiveFrom: '2026-12-10', lthr: 174 }, '2026-11-10');
+  assert.equal(at(hrOnly.list, '2026-12-11').paceSecPerKm, 370);
+  assert.equal(at(hrOnly.list, '2026-11-25').lthr, 171);
+});

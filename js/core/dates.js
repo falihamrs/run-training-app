@@ -61,6 +61,16 @@ export function todayLocal(now = new Date()) {
   return `${y}-${m}-${d}`;
 }
 
+/**
+ * Time-zone offset for an activity's local date: the browser's offset at that moment, unless the GPS
+ * longitude shows the run was recorded more than three hours of time zone away (a trip).
+ */
+export function activityTzOffsetMin(browserOffsetMin, lon) {
+  if (lon == null || !Number.isFinite(lon)) return browserOffsetMin;
+  const solar = Math.round(lon / 15) * 60;
+  return Math.abs(solar - browserOffsetMin) > 180 ? solar : browserOffsetMin;
+}
+
 /** Local calendar date of a UTC millisecond timestamp, given the zone offset in minutes east of UTC. */
 export function localDateOfMs(ms, tzOffsetMin = 0) {
   return fromUtcMs(Math.floor((ms + tzOffsetMin * 60000) / DAY_MS) * DAY_MS);
