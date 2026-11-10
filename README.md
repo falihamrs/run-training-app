@@ -120,6 +120,14 @@ Runs with no GPS in the file are marked **indoor**. Their moving time is the wat
 treadmill sensor's still seconds are not stops), and their pace is never used to estimate threshold
 pace, because it comes from a wrist or foot sensor. Heart rate and climbing still count.
 
+## Report for an AI chat
+
+On the Plan screen, "Copy report" or "Download .md" makes one Markdown file to paste into an AI chat. It
+holds the race, your thresholds and zones, schedule and baseline, the app's warnings and advice, then week
+by week the target, planned and done volume and each workout with the run matched to it (laps and typed
+climbing included), plus unplanned runs and the runs before the plan. Choose the last 4 weeks and next 4
+(short enough to paste) or the whole plan. Nothing is sent anywhere: you copy it yourself.
+
 ## Data and backups
 
 Data is stored in your browser's IndexedDB, on one device. Clearing browser data erases it, so

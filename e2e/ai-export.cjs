@@ -1,0 +1,36 @@
+// Optional browser check (not part of npm test): needs Playwright, the app on http://localhost:8080 and sample .tcx files.
+const { chromium } = require('playwright');
+const fs = require('fs');
+(async () => {
+  const browser = await chromium.launch();
+  const ctx = await browser.newContext({ viewport: { width: 1100, height: 900 }, timezoneId: 'Asia/Jakarta', acceptDownloads: true });
+  await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: 'http://localhost:8080' });
+  const page = await ctx.newPage();
+  page.on('pageerror', (e) => console.log('pageerror', e.message));
+  page.on('console', (m) => { if (m.type() === 'error') console.log('console', m.text()); });
+  await page.clock.install({ time: new Date('2026-11-10T21:00:00+07:00') });
+  await page.goto('http://localhost:8080/index.html#settings');
+  await page.waitForSelector('.tabs');
+  await page.selectOption('[data-path="race.mode"]', 'trail');
+  await page.fill('[data-path="race.date"]', '2027-06-26'); await page.fill('[data-path="race.distanceKm"]', '25'); await page.fill('[data-path="race.elevationGainM"]', '2300');
+  await page.click('[data-tab="schedule"]'); await page.selectOption('[data-path="schedule.runsPerWeek"]', '4');
+  await page.click('[data-tab="thresholds"]'); await page.fill('[data-draft="lthr"]', '171'); await page.fill('[data-draft="pace"]', '6:26');
+  await page.click('[data-action="add-threshold"]'); await page.click('[data-action="save"]');
+  await page.click('[data-page="history"]');
+  await page.setInputFiles('#hist-files', [...fs.readdirSync('/tmp/coros/tcx').map((f) => '/tmp/coros/tcx/' + f), '/tmp/coros/tm/2026-11-10.tcx']);
+  await page.waitForSelector('.results li'); await page.waitForTimeout(600);
+  await page.click('[data-page="plan"]'); await page.waitForTimeout(300);
+  console.log('buttons before plan:', await page.locator('[data-act="ai-copy"]').count());
+  await page.click('[data-act="generate"]'); await page.waitForTimeout(1500);
+  await page.click('[data-act="ai-copy"]'); await page.waitForTimeout(400);
+  const clip = await page.evaluate(() => navigator.clipboard.readText());
+  console.log('copied:', clip.length, 'chars |', clip.split('\n')[0], '| notice:', (await page.textContent('#page-plan')).match(/The report copied[^.]*\./)?.[0]);
+  await page.selectOption('[data-ai-range]', 'all');
+  const [dl] = await Promise.all([page.waitForEvent('download'), page.click('[data-act="ai-download"]')]);
+  const path = '/tmp/e2e/' + dl.suggestedFilename(); await dl.saveAs(path);
+  const md = fs.readFileSync(path, 'utf8');
+  console.log('download:', dl.suggestedFilename(), md.length, 'chars, weeks:', (md.match(/^### Week/gm) || []).length, '| treadmill laps:', /Laps — /.test(md));
+  await page.locator('[data-act="ai-copy"]').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: '/tmp/shots/ai_export.png', clip: { x: 0, y: 0, width: 1100, height: 520 } });
+  await browser.close();
+})();

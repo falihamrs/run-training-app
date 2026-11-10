@@ -7,6 +7,7 @@ import { compareRun, planAdvice, regenerateFrom, runsByWorkout, runsToUnlink, we
 import { formatDuration } from '../core/units.js';
 import { canInsertTest, climbTrend, goalAdvice, insertTest, nextWorkoutDate, suggestThresholdUpdate, testResultFromRun } from '../core/suggest.js';
 import { earliestThreshold, thresholdForDate } from '../core/thresholds.js';
+import { aiReport } from '../core/aiExport.js';
 import { esc } from './util.js';
 
 const PHASE_LABEL = { base: 'Base', build: 'Build', peak: 'Peak', taper: 'Taper' };
@@ -63,7 +64,8 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
         ${messagesHtml(state.messages)}
         ${state.messages.some((m) => m.code === 'entry' && m.level === 'block') && state.messages.filter((m) => m.level === 'block').length === 1 ? '<p class="notice warn">Your recent training is below the usual starting point for this race. You can still build the plan, with a warning, if you accept the extra risk. <button type="button" data-act="generate-override">Generate anyway</button></p>' : ''}
         <p><button type="button" class="primary" data-act="generate" ${storage ? '' : 'disabled'}>Generate plan</button>
-        <button type="button" class="link" data-go="settings">Open settings</button> <button type="button" class="link" data-go="history">Open history</button></p></section>`;
+        <button type="button" class="link" data-go="settings">Open settings</button> <button type="button" class="link" data-go="history">Open history</button></p>
+        ${state.runs.length ? aiExportHtml() : ''}</section>`;
     }
     const trail = p.mode === 'trail';
     const race = p.race;
@@ -78,6 +80,9 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
       <p class="row">
         <button type="button" data-act="csv">Download CSV</button>
         <button type="button" data-act="copy-plan">Copy all weeks as text</button>
+      </p>
+      ${aiExportHtml()}
+      <p class="row">
         ${state.confirmRegen
           ? `<span class="notice warn">Regenerate from ${esc(nextMonday(today))}? Weeks before that stay as they are. <button type="button" class="primary" data-act="regen-confirm">Yes, regenerate</button> <button type="button" data-act="cancel-regen">Cancel</button></span>`
           : '<button type="button" data-act="regen">Regenerate from next Monday</button>'}
@@ -86,6 +91,17 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
           : '<button type="button" data-act="new">Start a new plan</button>'}
       </p>
       ${adviceHtml()}</section>`;
+  }
+
+  function aiExportHtml() {
+    return `<div class="row" role="group" aria-label="Export for an AI chat"><strong>For an AI chat:</strong>
+      <select data-ai-range aria-label="Weeks to include"><option value="recent" ${state.aiRange === 'all' ? '' : 'selected'}>Last 4 weeks and next 4</option><option value="all" ${state.aiRange === 'all' ? 'selected' : ''}>Whole plan</option></select>
+      <button type="button" data-act="ai-copy">Copy report</button> <button type="button" data-act="ai-download">Download .md</button></div>`;
+  }
+
+  async function aiText() {
+    const history = getHistory ? await getHistory().catch(() => null) : null;
+    return aiReport({ plan: state.plan, runs: state.runs, settings: getSettings(), today, range: state.aiRange ?? 'recent', advice: state.plan ? planAdvice(state.plan, state.runs, today) : [], history });
   }
 
   function adviceHtml() {
@@ -242,12 +258,16 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
     return [null, null];
   }
 
-  async function flash(ok, what) {
-    state.notice = ok ? { kind: 'ok', text: `${what} copied. Paste it into your notes or the Coros app.` } : { kind: 'error', text: 'Copying was blocked by the browser. Select the text manually.' };
+  async function flash(ok, what, where = 'your notes or the Coros app') {
+    state.notice = ok ? { kind: 'ok', text: `${what} copied. Paste it into ${where}.` } : { kind: 'error', text: 'Copying was blocked by the browser. Select the text manually.' };
     const keep = [...el.querySelectorAll('details[open]')].map((d) => Number(d.dataset.week));
     keep.forEach((n) => state.open.add(n));
     render();
   }
+
+  el.addEventListener('change', (e) => {
+    if (e.target.dataset?.aiRange != null) state.aiRange = e.target.value === 'all' ? 'all' : 'recent';
+  });
 
   el.addEventListener('toggle', (e) => {
     const d = e.target.closest?.('details.week');
@@ -292,6 +312,16 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
       a.download = `run-plan-${state.plan.raceDate}.csv`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+      return;
+    }
+    if (act === 'ai-copy') return flash(await copyText(await aiText()), 'The report', 'an AI chat');
+    if (act === 'ai-download') {
+      const blob = new Blob([await aiText()], { type: 'text/markdown' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `training-report-${today}.md`;
       a.click();
       setTimeout(() => URL.revokeObjectURL(a.href), 1000);
       return;
