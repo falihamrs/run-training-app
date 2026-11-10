@@ -94,8 +94,17 @@ export function regenerateFrom(oldPlan, settings, history, { today, now = null }
   const newStart = nextMonday(today);
   const keep = oldPlan.weeks.filter((w) => w.start < newStart).map((w) => ({ ...w, locked: true }));
   const s = { ...settings, schedule: { ...settings.schedule, startDate: newStart } };
-  // keep the user's earlier choice to build past the base-training check
-  const r = generatePlan(s, history, { today, id: oldPlan.id, now, allowShort: true, overrideEntry: !!oldPlan.entryOverridden });
+  // a plan that is already under way is never refused for a low baseline; it gets a warning instead
+  // carry the periodisation over: each remaining week keeps its phase, and the session ladders continue
+  const future = oldPlan.weeks.filter((w) => w.start >= newStart);
+  const phaseIdx = { base: 0, build: 0, peak: 0, taper: 0 };
+  const ptr = {};
+  for (const w of keep) {
+    phaseIdx[w.phase] = (phaseIdx[w.phase] ?? 0) + 1;
+    for (const x of w.workouts) if (['THR', 'VO2', 'CLB', 'HIL', 'DWN', 'FAR', 'TMP', 'HIKE', 'MP'].includes(x.code)) ptr[x.code] = Math.min(8, (ptr[x.code] ?? 0) + 1);
+  }
+  const resume = future.length ? { phases: future.map((w) => w.phase), phaseIdx, ptr } : null;
+  const r = generatePlan(s, history, { today, id: oldPlan.id, now, allowShort: true, overrideEntry: true, resume });
   if (!r.plan) return r;
   const offset = keep.length;
   const weeks = r.plan.weeks.map((w) => {

@@ -105,3 +105,18 @@ test('regenerating a plan built past the entry check keeps that choice', () => {
   assert.ok(r.plan, r.messages.map((m) => m.text).join(' '));
 });
 const START_PLAN = (p) => p.startDate;
+
+test('regenerating mid-plan keeps each remaining week in its phase and continues the session ladders', () => {
+  const s = settingsFor({ mode: 'trail', distanceKm: 25, gain: 2300, runs: 4, weeks: 20, terrain: { Mon: 'incline', Tue: 'flat', Wed: 'incline', Thu: 'flat', Fri: 'flat', Sat: 'hills', Sun: 'hills' } });
+  const h = hist({ baselineWeeklyHours: 4.5, longestRunMin: 130, baselineWeeklyVertM: 600 });
+  const p = generatePlan(s, h, { today: '2026-12-28' }).plan;
+  const r = regenerateFrom(p, s, h, { today: addDays(p.startDate, 7 * 9 + 2) }); // during week 10
+  assert.ok(r.plan);
+  assert.deepEqual(r.plan.weeks.map((w) => w.phase), p.weeks.map((w) => w.phase));
+  assert.ok(!r.plan.weeks.slice(10).some((w) => w.kind === 'hold'));
+  // week 11 was a Build week with a tempo; it must not fall back to a Base fartlek
+  const w11 = r.plan.weeks[10].workouts.map((x) => x.code);
+  assert.ok(w11.includes('TMP') && !w11.includes('FAR'), w11.join(','));
+  const tempo = (pl, n) => pl.weeks[n - 1].workouts.find((x) => x.code === 'TMP')?.plannedMin ?? 0;
+  assert.ok(tempo(r.plan, 11) >= tempo(p, 9), `tempo restarted: ${tempo(r.plan, 11)} after ${tempo(p, 9)}`);
+});

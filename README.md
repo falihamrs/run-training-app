@@ -97,6 +97,10 @@ npm test
 - A threshold entry with only LTHR or only pace keeps the other value from the entry before it.
 - An activity's date uses the browser's time zone at the time of the run; if the GPS shows it was recorded more than three hours of time zone away, the run's own zone is used.
 - Trail races above 45 km or 75 km-effort stay out of scope: the training tables stop there.
+- Being below the usual starting point for a race does not block a plan that has time to build the base first: the plan must reach that level and still leave the minimum block before the race. Only shorter plans need "Generate anyway".
+- "Regenerate from next Monday" keeps each remaining week in the phase it already had and continues the session ladders; only the volume restarts from what you actually ran. A plan that is under way is never refused for a low baseline.
+- In back-to-back weeks the flat tempo becomes an easy run when its only free day follows the previous long run; the climbing session stays.
+- A threshold entry can be corrected by adding one with the same date. New entries still cannot start in the past.
 
 ## Typing in climbing (treadmill runs)
 

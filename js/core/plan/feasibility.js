@@ -14,7 +14,7 @@ const hm = (min) => `${Math.floor(min / 60)} h ${String(Math.round(min % 60)).pa
 /**
  * @returns {{status:'OK'|'WARN'|'BLOCK', messages:{level,code,text}[], params?:object}}
  */
-export function checkFeasibility(settings, history, { effectiveRuns, allowShort = false, overrideEntry = false } = {}) {
+export function checkFeasibility(settings, history, { effectiveRuns, allowShort = false, overrideEntry = false, resumePhases = null } = {}) {
   const messages = [];
   const block = (code, text) => messages.push({ level: 'block', code, text });
   const warn = (code, text) => messages.push({ level: 'warn', code, text });
@@ -43,7 +43,7 @@ export function checkFeasibility(settings, history, { effectiveRuns, allowShort 
 
   const earlyRace = ['Mon', 'Tue'].includes(weekdayOf(race.date));
   const Wt = W - (earlyRace ? 1 : 0); // training weeks: a Monday or Tuesday race leaves its own week empty
-  const params = { W, startMonday, raceMonday, trail, xp, entry, earlyRace };
+  const params = { W, startMonday, raceMonday, trail, xp, entry, earlyRace, resumePhases };
   if (history.returnFromBreak) warn('break', 'You are returning from a break, so the plan starts from a reduced baseline.');
 
   if (trail) {
@@ -66,7 +66,7 @@ export function checkFeasibility(settings, history, { effectiveRuns, allowShort 
     if (cls.entry) {
       const [h, longH] = cls.entry;
       if ((history.baselineWeeklyHours ?? 0) < h || (history.longestRunMin ?? 0) < longH * 60) {
-        (overrideEntry ? warn : block)('entry', `For a race of ${cls.label} you should already train about ${h} h a week with a longest run of ${longH} h. ${overrideEntry ? 'You chose to build the plan anyway, so progress carefully and cut back at any sign of injury.' : 'Build a base first or pick a shorter race.'}`);
+        (overrideEntry ? warn : block)('entry', `For a race of ${cls.label} you should already train about ${h} h a week with a longest run of ${longH} h. ${overrideEntry ? 'The plan was built anyway, so progress carefully and cut back at any sign of injury.' : 'Build a base first or pick a shorter race.'}`);
       }
     }
     if (messages.some((m) => m.level === 'block')) return { status: 'BLOCK', messages, params };
@@ -106,7 +106,7 @@ export function checkFeasibility(settings, history, { effectiveRuns, allowShort 
     if (t.entry) {
       const [km, longKm] = t.entry;
       if (history.baselineWeeklyKm < km || history.longestRunKm < longKm) {
-        const text = `For a ${t.label} you should already run ${km} km a week with a longest run of ${longKm} km. ${overrideEntry && t.entryBlock ? 'You chose to build the plan anyway, so progress carefully and cut back at any sign of injury.' : 'Build a base first or pick a shorter race.'}`;
+        const text = `For a ${t.label} you should already run ${km} km a week with a longest run of ${longKm} km. ${overrideEntry && t.entryBlock ? 'The plan was built anyway, so progress carefully and cut back at any sign of injury.' : 'Build a base first or pick a shorter race.'}`;
         if (t.entryBlock && !overrideEntry) block('entry', text); else warn('entry', text);
       }
     }

@@ -49,8 +49,11 @@ export function validateThresholdEntry(entry) {
  */
 export function addThresholdEntry(list, entry, today) {
   const errors = validateThresholdEntry(entry);
-  if (errors.length === 0 && list.length > 0 && entry.effectiveFrom < today) {
-    errors.push('A new entry cannot start in the past, so earlier workouts keep their old targets.');
+  // A new entry cannot start in the past, but an existing entry can be corrected by adding one with
+  // the same date (a typing mistake in the first entry would otherwise be stuck for good).
+  const correction = list.some((e) => e.effectiveFrom === entry.effectiveFrom);
+  if (errors.length === 0 && list.length > 0 && entry.effectiveFrom < today && !correction) {
+    errors.push('A new entry cannot start in the past, so earlier workouts keep their old targets. To correct an existing entry, use its exact date.');
   }
   if (errors.length > 0) return { list, errors };
   // An entry that updates only one value keeps the other from the entry in force before it,

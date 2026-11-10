@@ -26,13 +26,20 @@ function coverageOf(weeks, trail) {
   return { worst: list.length ? Math.min(...list.map((m) => m.ratio)) : 1, gaps: list.filter((m) => m.ratio < COVERAGE_MIN) };
 }
 
-export function generatePlan(settingsIn, history, { today, id = 'main', now = null, allowShort = false, overrideEntry = false, noRunAdvice = false } = {}) {
+export function generatePlan(settingsIn, history, { today, id = 'main', now = null, allowShort = false, overrideEntry = false, noRunAdvice = false, resume = null } = {}) {
   const v = validateSettings(settingsIn, { today });
   if (v.errors.length) {
     return { status: 'BLOCK', messages: v.errors.map((e) => ({ level: 'block', code: 'input', text: e.message })), plan: null };
   }
   const settings = v.normalized;
-  const feas = checkFeasibility(settings, history, { effectiveRuns: v.effectiveRunsPerWeek, allowShort, overrideEntry });
+  const resumePhases = resume?.phases ?? null;
+  let feas = checkFeasibility(settings, history, { effectiveRuns: v.effectiveRunsPerWeek, allowShort, overrideEntry, resumePhases });
+  // Below the usual starting point is not final: a plan with enough weeks can build that base first.
+  // Build it without the entry block, then decide at the end whether the lead-in is long enough.
+  const strict = feas;
+  const strictBlocks = feas.messages.filter((m) => m.level === 'block');
+  const entryPending = feas.status === 'BLOCK' && strictBlocks.length === 1 && strictBlocks[0].code === 'entry';
+  if (entryPending) feas = checkFeasibility(settings, history, { effectiveRuns: v.effectiveRunsPerWeek, allowShort, overrideEntry: true, resumePhases });
   if (feas.status === 'BLOCK') return { status: 'BLOCK', messages: feas.messages, plan: null };
 
   const { params } = feas;
@@ -63,10 +70,11 @@ export function generatePlan(settingsIn, history, { today, id = 'main', now = nu
   const afterLong = normalLayout?.longDay ? WEEKDAYS[(WEEKDAYS.indexOf(normalLayout.longDay) + 1) % 7] : null;
 
   const state = {
-    ptr: { THR: 0, VO2: 0, CLB: 0, HIL: 0, DWN: 0, FAR: 0, TMP: 0, HIKE: 0, MP: 0 },
+    // a regenerated plan carries on from the sessions already done instead of restarting each ladder
+    ptr: { THR: 0, VO2: 0, CLB: 0, HIL: 0, DWN: 0, FAR: 0, TMP: 0, HIKE: 0, MP: 0, ...(resume?.ptr ?? {}) },
     prevLong: trail ? Math.min(history.longestRunMin ?? 0, 9999) : history.longestRunKm ?? 0,
     lastLoadLong: 0,
-    phaseIdx: { base: 0, build: 0, peak: 0, taper: 0 },
+    phaseIdx: { base: 0, build: 0, peak: 0, taper: 0, ...(resume?.phaseIdx ?? {}) },
   };
   const seenLayoutMessages = new Set();
   const weeks = [];
@@ -83,7 +91,9 @@ export function generatePlan(settingsIn, history, { today, id = 'main', now = nu
 
     // ---- layout ----
     const b2bWeek = trail && vw.phase === 'peak' && pIdx % 2 === 0 && !down && params.TrMin >= 240 && vw.targetHours >= 4;
-    const layoutOpts = { runs: v.effectiveRunsPerWeek, available, b2b: b2bWeek, avoidHard: raceLike ? afterLong : null };
+    // race-like weeks must keep quality off the day after the last long run; back-to-back weeks only prefer it,
+    // because moving the climbing session to a flat day would cost more than it gains
+    const layoutOpts = { runs: v.effectiveRunsPerWeek, available, b2b: b2bWeek, avoidHard: raceLike || b2bWeek ? afterLong : null, avoidCost: b2bWeek ? 5 : 50 };
     let layout;
     if (isRaceWeek) {
       let raceAvail = available.filter((d) => WEEKDAYS.indexOf(d) < raceIdx);
@@ -495,7 +505,10 @@ export function generatePlan(settingsIn, history, { today, id = 'main', now = nu
     } else {
       const steps = W.easySteps(round5(Math.min(clash.plannedMin, 40)), { zone: 'Z2' });
       Object.assign(clash, { code: 'EZ', name: W.NAMES.EZ, role: 'E', steps, plannedMin: W.totalMinutes(steps), plannedVertM: 0, plannedKm: trail ? null : Math.round(((W.totalMinutes(steps) * 60) / easyPace) * 10) / 10 });
-      cur.flags.push('A quality session became an easy run because it would have followed the long run directly.');
+      const otherQuality = cur.workouts.some((w) => (w.role === 'Q1' || w.role === 'Q2') && w !== clash);
+      cur.flags.push(cur.workouts.some((w) => w.code === 'B2B')
+        ? `Back-to-back week: the two long runs are the main work, so the ${trail ? 'flat tempo' : 'first quality session'} is an easy run.${otherQuality ? ' The other quality session stays.' : ''}`
+        : 'A quality session became an easy run because it would have followed the long run directly.');
     }
     const rw = cur.workouts.filter((w) => w.role !== 'S' && w.role !== 'RACE');
     cur.plannedMin = rw.reduce((x, w) => x + w.plannedMin, 0);
@@ -530,6 +543,29 @@ export function generatePlan(settingsIn, history, { today, id = 'main', now = nu
     steps: [], plannedMin: trail ? Math.round(params.TrMin) : Math.round(params.predictedSec / 60), plannedKm: race.distanceKm, plannedVertM: trail ? race.elevationGainM : 0, notes: [], locked: false,
   });
 
+  // Entry check, second half: does the plan reach the starting point early enough to leave a full block?
+  const entryNeed = trail ? params.cls.entry : params.table.entry; // [weekly hours, longest run hours] or [weekly km, longest run km]
+  let entryLeadWeeks = null;
+  if (entryNeed && messages.some((m) => m.code === 'entry')) {
+    const minBlock = trail ? params.cls.block : params.table.block;
+    const trainWeeks = nWeeks - (params.earlyRace ? 1 : 0);
+    let bestVol = 0, bestLong = 0, reached = null;
+    for (const w of weeks) {
+      bestVol = Math.max(bestVol, trail ? w.targetHours : w.targetKm);
+      const long = w.workouts.find((x) => x.role === 'L');
+      if (long) bestLong = Math.max(bestLong, trail ? long.plannedMin / 60 : long.plannedKm ?? 0);
+      if (bestVol >= entryNeed[0] && bestLong >= 0.9 * entryNeed[1]) { reached = w.n; break; }
+    }
+    if (reached != null && trainWeeks - reached >= minBlock) entryLeadWeeks = reached;
+    const i = messages.findIndex((m) => m.code === 'entry');
+    if (entryLeadWeeks != null) {
+      const need = trail ? `about ${entryNeed[0]} h a week with a longest run of ${entryNeed[1]} h` : `${entryNeed[0]} km a week with a longest run of ${entryNeed[1]} km`;
+      messages[i] = { level: 'warn', code: 'entryBase', text: `You are below the usual starting point for this race (${need}), but there is time to get there: weeks 1 to ${entryLeadWeeks} build that base, which leaves ${trainWeeks - entryLeadWeeks} weeks of race-specific training. Take those first weeks patiently and cut back at any sign of injury.` };
+    } else if (entryPending && !overrideEntry) {
+      return { status: 'BLOCK', messages: strict.messages, plan: null };
+    }
+  }
+
   const coverage = coverageOf(weeks, trail);
   const climbDays = available.filter((d) => terrain[d] === 'hills' || terrain[d] === 'incline');
   if (!noRunAdvice && trail && coverage.worst < COVERAGE_MIN && climbDays.length === 0) {
@@ -538,7 +574,7 @@ export function generatePlan(settingsIn, history, { today, id = 'main', now = nu
     const maxRuns = Math.min(7, available.length);
     let better = null;
     for (let r = v.effectiveRunsPerWeek + 1; r <= maxRuns && !better; r++) {
-      const trial = generatePlan({ ...settingsIn, schedule: { ...settingsIn.schedule, runsPerWeek: r } }, history, { today, id, now, allowShort, overrideEntry, noRunAdvice: true });
+      const trial = generatePlan({ ...settingsIn, schedule: { ...settingsIn.schedule, runsPerWeek: r } }, history, { today, id, now, allowShort, overrideEntry, noRunAdvice: true, resume });
       if (trial.plan) {
         const c = coverageOf(trial.plan.weeks, trail);
         if (c.worst >= COVERAGE_MIN) better = { runs: r, coverage: c };
@@ -555,7 +591,7 @@ export function generatePlan(settingsIn, history, { today, id = 'main', now = nu
   const finalStatus = messages.some((m) => m.level === 'warn') ? 'WARN' : 'OK';
 
   const plan = {
-    id, createdAt: now ?? null, mode: trail ? 'trail' : 'road', status: finalStatus, entryOverridden: !!overrideEntry,
+    id, createdAt: now ?? null, mode: trail ? 'trail' : 'road', status: finalStatus, entryOverridden: Boolean(overrideEntry && entryLeadWeeks == null && messages.some((m) => m.code === 'entry')), entryLeadWeeks,
     race: { ...race, kmEffort: trail ? params.effort : null, expectedDurationMin: trail ? params.TrRange : null, predictedSec: trail ? null : params.predictedSec },
     goalPaceSecPerKm: goalPace, easyPaceSecPerKm: easyPace, startDate: params.startMonday, raceDate,
     phases: vol.phases, peak: { km: vol.peakKm, hours: vol.peakHours, vertM: vol.peakVertM, longRunMin: params.peakLongMin ?? null, longRunKm: params.peakLong ?? null },

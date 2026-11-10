@@ -170,6 +170,7 @@ export function mountSettings(root, { storage, settings, savedAt = null, today, 
           <label class="field"><span class="lbl">LTHR (bpm)</span><input type="number" min="120" max="200" data-draft="lthr" value="${esc(state.draft.lthr)}"></label>
           <label class="field"><span class="lbl">Threshold pace (m:ss per km)</span><input type="text" placeholder="5:30" data-draft="pace" value="${esc(state.draft.pace)}"></label>
         </div>
+        <p class="muted small">Leave LTHR or pace empty to keep its current value. To correct an existing entry, add one with the same date; it replaces the old one.</p>
         ${state.draftErrors.length ? `<ul class="errs">${state.draftErrors.map((m) => `<li>${esc(m)}</li>`).join('')}</ul>` : ''}
         <p><button type="button" class="primary" data-action="add-threshold">Add entry</button></p>
       </section>`;
@@ -258,6 +259,7 @@ export function mountSettings(root, { storage, settings, savedAt = null, today, 
     root.innerHTML = `
       ${storageProblem ? `<p class="notice error">${esc(storageProblem)}</p>` : ''}
       <nav class="tabs" role="tablist">${tabs}</nav>
+      ${state.notice?.kind === 'error' && state.tab !== 'backup' ? `<p class="notice error" role="alert">${esc(state.notice.text)}</p>` : ''}
       <div class="layout">
         <main class="panel" role="tabpanel">${PANELS[state.tab]()}</main>
         <aside class="side" id="messages" aria-live="polite"></aside>

@@ -71,3 +71,14 @@ test('an entry with only one value keeps the other from the entry before it', as
   assert.equal(at(hrOnly.list, '2026-12-11').paceSecPerKm, 370);
   assert.equal(at(hrOnly.list, '2026-11-25').lthr, 171);
 });
+
+test('an existing entry can be corrected on its own date, but new past dates are still refused', async () => {
+  const { addThresholdEntry: add } = await import('../js/core/thresholds.js');
+  const first = add([], { effectiveFrom: '2026-11-01', lthr: 177, paceSecPerKm: 386 }, '2026-11-10').list;
+  assert.equal(first.length, 1);
+  const fixed = add(first, { effectiveFrom: '2026-11-01', lthr: 171, paceSecPerKm: 386 }, '2026-11-10');
+  assert.deepEqual(fixed.errors, []);
+  assert.equal(fixed.list.length, 1);
+  assert.equal(fixed.list[0].lthr, 171);
+  assert.ok(add(first, { effectiveFrom: '2026-11-05', lthr: 171 }, '2026-11-10').errors.length > 0);
+});

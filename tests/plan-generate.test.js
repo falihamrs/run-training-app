@@ -297,3 +297,27 @@ test('warnings are stored with the plan', () => {
   assert.ok(r.plan.messages.some((m) => m.code === 'entry'));
   assert.equal(r.plan.entryOverridden, true);
 });
+
+test('below the starting point: enough weeks build the base first, too few weeks are refused', () => {
+  const low = hist({ baselineWeeklyHours: 1.9, longestRunMin: 80, baselineWeeklyVertM: 60 });
+  const long = generatePlan(settingsFor({ ...trailOpts, distanceKm: 25, gain: 2300, runs: 4, weeks: 32 }), low, { today: TODAY });
+  assert.ok(long.plan, long.messages.map((m) => m.text).join(' '));
+  assert.equal(long.plan.entryOverridden, false);
+  assert.ok(long.plan.entryLeadWeeks >= 5 && long.plan.entryLeadWeeks <= 20);
+  assert.ok(long.messages.some((m) => m.code === 'entryBase') && !long.messages.some((m) => m.code === 'entry'));
+  // the week named in the message really is at the starting point: 4 h a week and a long run near 2 h
+  const upTo = long.plan.weeks.slice(0, long.plan.entryLeadWeeks);
+  assert.ok(Math.max(...upTo.map((w) => w.targetHours)) >= 4);
+  assert.ok(Math.max(...upTo.flatMap((w) => w.workouts.filter((x) => x.role === 'L').map((x) => x.plannedMin))) >= 108);
+  assert.ok(long.plan.weeks.length - long.plan.entryLeadWeeks >= 12);
+  // 16 weeks is not enough to build the base and still have a 12-week block
+  const short = generatePlan(settingsFor({ ...trailOpts, distanceKm: 25, gain: 2300, runs: 4, weeks: 16 }), low, { today: TODAY });
+  assert.equal(short.status, 'BLOCK');
+  assert.ok(short.messages.some((m) => m.code === 'entry' && m.level === 'block'));
+  const forced = generatePlan(settingsFor({ ...trailOpts, distanceKm: 25, gain: 2300, runs: 4, weeks: 16 }), low, { today: TODAY, overrideEntry: true });
+  assert.equal(forced.plan.entryOverridden, true);
+  // a runner already at the starting point gets no message at all
+  const fit = generatePlan(settingsFor({ ...trailOpts, distanceKm: 25, gain: 2300, runs: 5, weeks: 16 }), hist({ baselineWeeklyHours: 5, longestRunMin: 150, baselineWeeklyVertM: 800 }), { today: TODAY });
+  assert.ok(!fit.messages.some((m) => m.code === 'entry' || m.code === 'entryBase'));
+  assert.equal(fit.plan.entryLeadWeeks, null);
+});

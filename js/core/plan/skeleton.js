@@ -67,7 +67,8 @@ export function buildVolume(params, history, settings) {
   };
   // Plans longer than 24 weeks hold the current volume first, but only for weeks the ramp does not need:
   // the build must still reach its peak targets by the start of the peak phase.
-  let hold = Math.max(0, W - stub - MAX_RAMP_WEEKS);
+  // A plan that is being regenerated mid-way never goes back to hold weeks.
+  let hold = params.resumePhases ? 0 : Math.max(0, W - stub - MAX_RAMP_WEEKS);
   let R, phases, built;
   for (;;) {
     R = Math.max(0, W - hold - taperWeeks - stub);
@@ -100,7 +101,9 @@ export function buildVolume(params, history, settings) {
     });
   }
 
-  const phaseFor = (i) => (i <= phases.base ? 'base' : i <= phases.base + phases.build ? 'build' : 'peak');
+  // A regenerated plan keeps the phase each remaining week already had, so training does not restart from Base.
+  const resumed = params.resumePhases?.filter((p) => p !== 'taper') ?? null;
+  const phaseFor = (i) => (resumed ? resumed[i - 1] ?? 'peak' : i <= phases.base ? 'base' : i <= phases.base + phases.build ? 'build' : 'peak');
   for (let i = 1; i <= R; i++) {
     const s = loadSeries[i - 1];
     const phase = phaseFor(i);
