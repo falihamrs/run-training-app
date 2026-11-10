@@ -1,5 +1,6 @@
 // Manual climbing for runs whose file has no usable elevation (treadmill, bad barometer).
-// The run is cut into 1 km splits; each split gets a treadmill incline (%) or metres of climbing.
+// The run is cut into the watch's laps (when the file has them) or 1 km splits; each row gets a
+// treadmill incline (%) or metres of climbing.
 import { terrainLabel } from './analyze.js';
 
 export const MAX_INCLINE_PCT = 25;
@@ -18,7 +19,31 @@ export function kmSplits(run, stream = null) {
   for (let m = SPLIT_M; m < total; m += SPLIT_M) bounds.push(m);
   if (bounds.length && total - bounds[bounds.length - 1] < MIN_LAST_SPLIT_M) bounds.pop(); // fold a tiny tail into the last split
   bounds.push(total);
+  return splitsAt(run, stream, bounds);
+}
 
+/** The watch's laps as rows, or null when the run has none. Each row keeps the lap's own timer time. */
+export function lapSplits(run, stream = null) {
+  if (!(run.laps?.length >= 2)) return null;
+  const total = run.distanceKm * 1000;
+  const bounds = [];
+  let m = 0;
+  for (const l of run.laps) { m += l.distM; bounds.push(Math.min(total, m)); }
+  bounds[bounds.length - 1] = total;
+  return splitsAt(run, stream, bounds).map((s, i) => ({ ...s, lapSec: run.laps[i].sec }));
+}
+
+/** Rows for the editor: 'laps' when asked for and available, otherwise 1 km splits. */
+export function splitsFor(run, stream, basis) {
+  return (basis === 'laps' && lapSplits(run, stream)) || kmSplits(run, stream);
+}
+
+export function defaultBasis(run) {
+  return run.laps?.length >= 2 ? 'laps' : 'km';
+}
+
+function splitsAt(run, stream, bounds) {
+  const total = run.distanceKm * 1000;
   const hasStream = stream?.t?.length > 1 && stream.d?.length === stream.t.length;
   // time (moving seconds) at which a distance is reached
   const timeAt = (m) => {
@@ -62,6 +87,24 @@ export function splitGains(splits, values, unit) {
     const v = Number(values[i]);
     if (!Number.isFinite(v) || v <= 0) return 0;
     return unit === 'pct' ? (s.distM * Math.min(v, MAX_INCLINE_PCT)) / 100 : Math.min(v, MAX_SPLIT_GAIN_M);
+  });
+}
+
+/**
+ * Moves typed climbing to a different set of rows (laps to 1 km splits or back), spreading each row's
+ * metres evenly over its distance. Returns values in `unit` for the new rows.
+ */
+export function convertValues(fromSplits, values, unit, toSplits) {
+  const gains = splitGains(fromSplits, values, unit);
+  return toSplits.map((t) => {
+    let g = 0;
+    fromSplits.forEach((f, i) => {
+      const a = Math.max(f.startM, t.startM);
+      const b = Math.min(f.startM + f.distM, t.startM + t.distM);
+      if (b > a && f.distM > 0) g += gains[i] * ((b - a) / f.distM);
+    });
+    if (g < 0.05) return '';
+    return unit === 'pct' ? Math.round((g / t.distM) * 1000) / 10 : Math.round(g);
   });
 }
 
@@ -171,8 +214,8 @@ function deviceValues(run) {
  * Fields to store on the run for the typed split values. `unit` is 'pct' (treadmill incline) or 'm'.
  * The original values from the file are kept under manualClimb.device.
  */
-export function manualClimbPatch(run, stream, values, unit) {
-  const splits = kmSplits(run, stream);
+export function manualClimbPatch(run, stream, values, unit, basis = 'km') {
+  const splits = splitsFor(run, stream, basis);
   const gains = splitGains(splits, values, unit);
   const gainM = gains.reduce((a, b) => a + b, 0);
   const device = deviceValues(run);
@@ -184,7 +227,7 @@ export function manualClimbPatch(run, stream, values, unit) {
     terrain: terrainLabel(climbDensity),
     climbs: climbsFrom(splits, gains),
     efforts: effortsWith(base, stream, splits, gains),
-    manualClimb: { unit, values: splits.map((_, i) => { const v = Number(values[i]); return Number.isFinite(v) && v > 0 ? v : 0; }), device },
+    manualClimb: { unit, basis: basis === 'laps' && lapSplits(run, stream) ? 'laps' : 'km', values: splits.map((_, i) => { const v = Number(values[i]); return Number.isFinite(v) && v > 0 ? v : 0; }), device },
   };
 }
 

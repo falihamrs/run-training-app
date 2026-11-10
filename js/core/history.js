@@ -42,6 +42,9 @@ export function collectEfforts(pool, easyPaceSecPerKm) {
       const faster = easyPaceSecPerKm && h.paceSecPerKm <= easyPaceSecPerKm * 0.85;
       if (faster || h.gradePct >= 6) lthr.push({ value: h.avgHr, date: r.date, race: Boolean(r.race), runId: r.id });
     }
+    // treadmill pace comes from a wrist or foot sensor and the incline is often unknown, so indoor runs
+    // count for heart rate only
+    if (r.indoor) continue;
     const b30 = r.efforts?.w30?.bestPace;
     const b20 = r.efforts?.w20?.bestPace;
     if (b30) pace.push({ value: b30.paceSecPerKm, date: r.date, race: Boolean(r.race), runId: r.id });

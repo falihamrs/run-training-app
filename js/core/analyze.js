@@ -32,7 +32,7 @@ function ensureDistance(points) {
 }
 
 /** Build the 1 Hz moving timeline: cumulative distance, altitude, gain, heart rate. */
-export function buildTimeline(rawPoints) {
+export function buildTimeline(rawPoints, { indoor = false } = {}) {
   const pts = ensureDistance(rawPoints);
   const prof = elevationProfile(pts.map((p) => p.alt));
   const d = [];
@@ -51,7 +51,9 @@ export function buildTimeline(rawPoints) {
     const dd = b.dist - a.dist;
     if (dt > MAX_GAP_SEC || dd < 0) continue;
     const pace = dd > 0 ? (dt / dd) * 1000 : Infinity;
-    if (pace > SLOWEST_MOVING_SEC_PER_KM) continue;
+    // indoors the distance comes from a wrist or foot sensor that updates in steps, so a second with no
+    // distance is a sensor step, not a stop; only gaps in the recording are pauses there
+    if (!indoor && pace > SLOWEST_MOVING_SEC_PER_KM) continue;
     const steps = Math.max(1, Math.round(dt));
     for (let s = 1; s <= steps; s++) {
       const f = s / steps;
@@ -141,11 +143,35 @@ export function findClimbs(tl) {
 }
 
 /**
+ * The watch's laps as distances along the run, scaled to the analysed distance. Laps shorter than
+ * 20 m (a lap button pressed twice) join the next one. Null when the file has fewer than two laps.
+ */
+function lapsOf(act, totalM) {
+  const raw = (act.laps ?? []).filter((l) => l.distM >= 0 && l.sec >= 0);
+  if (raw.length < 2) return null;
+  const merged = [];
+  let carry = null;
+  for (const l of raw) {
+    const cur = carry ? { distM: carry.distM + l.distM, sec: carry.sec + l.sec } : { distM: l.distM, sec: l.sec };
+    if (cur.distM < 20) { carry = cur; continue; }
+    carry = null;
+    merged.push(cur);
+  }
+  if (carry && merged.length) { merged.at(-1).distM += carry.distM; merged.at(-1).sec += carry.sec; }
+  const sum = merged.reduce((s, l) => s + l.distM, 0);
+  if (merged.length < 2 || sum <= 0) return null;
+  const k = totalM / sum;
+  return merged.map((l) => ({ distM: Math.round(l.distM * k * 10) / 10, sec: Math.round(l.sec) }));
+}
+
+/**
  * @returns {{ok:true,run:object,stream:object}|{ok:false,error:string}}
  */
 export function analyzeActivity(act, { tzOffsetMin = 0, fileName = '' } = {}) {
   if (!act.points || act.points.length < 30) return { ok: false, error: 'Too few data points' };
-  const tl = buildTimeline(act.points);
+  // no position anywhere in the file: a treadmill or other indoor run
+  const indoor = !act.points.some((p) => p.lat != null && p.lon != null);
+  const tl = buildTimeline(act.points, { indoor });
   const dist = tl.d.at(-1) ?? 0;
   if (dist <= 0) return { ok: false, error: 'No distance in file' };
   if (dist < MIN_DIST_M) return { ok: false, error: 'Shorter than 1 km' };
@@ -174,6 +200,8 @@ export function analyzeActivity(act, { tzOffsetMin = 0, fileName = '' } = {}) {
     efforts: { w20: e20, w30: e30 },
     climbs: findClimbs(tl),
     race: false,
+    indoor,
+    laps: lapsOf(act, dist),
     fingerprint: `${act.startTime}|${Math.round(dist)}`,
   };
   // 5-second downsample for later charts

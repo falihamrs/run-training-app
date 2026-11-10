@@ -51,7 +51,13 @@ export function parseTcx(text) {
     }
     points.sort((x, y) => x.t - y.t);
     const id = parseTime(tagText(a.body, 'Id'));
-    acts.push({ sport, startTime: points.length ? points[0].t : id, points });
+    // the watch's laps (auto laps or workout steps): start time, timer seconds and distance
+    const laps = blocks(a.body, 'Lap').map((l) => ({
+      startMs: parseTime(/StartTime="([^"]*)"/i.exec(l.attrs)?.[1]),
+      sec: num(tagText(l.body.replace(/<(?:[\w.-]+:)?Track[\s>][\s\S]*$/i, ''), 'TotalTimeSeconds')),
+      distM: num(tagText(l.body.replace(/<(?:[\w.-]+:)?Track[\s>][\s\S]*$/i, ''), 'DistanceMeters')),
+    })).filter((l) => l.sec != null && l.distM != null);
+    acts.push({ sport, startTime: points.length ? points[0].t : id, points, laps });
   }
   return acts;
 }

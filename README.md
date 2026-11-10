@@ -105,11 +105,17 @@ npm test
 ## Typing in climbing (treadmill runs)
 
 A treadmill file has no elevation, and a watch cannot change it afterwards. In History, press **edit**
-next to a run's climbing. The run is shown in 1 km splits with pace and heart rate. Type the incline (%)
+next to a run's climbing. When the file has the watch's laps (Coros and Strava TCX exports do), each
+lap is a row, so an interval session shows every interval and recovery on its own; otherwise the run is
+shown in 1 km splits. Each row has its pace and heart rate. Type the incline (%)
 you used in each split, or switch to metres for an outdoor run with a wrong reading. "Fill all" sets
 every split at once. Saving replaces the run's climbing, so weekly climbing, plan progress, sustained
 climbs (8 minutes or more at 6% or steeper) and threshold suggestions all use it. "Back to the watch
 value" undoes it.
+
+Runs with no GPS in the file are marked **indoor**. Their moving time is the watch's timer time (a
+treadmill sensor's still seconds are not stops), and their pace is never used to estimate threshold
+pace, because it comes from a wrist or foot sensor. Heart rate and climbing still count.
 
 ## Data and backups
 
