@@ -61,8 +61,15 @@ also works offline.
 Needs Node 20 or newer.
 
 ```sh
-npm test
+npm test                 # unit tests
+npm run fuzz             # random settings through plan, edits, undo, regenerate and AI answers
+                         # node tests/fuzz/fuzz.mjs [iterations=400] [seed=12345]
+python3 -m http.server 8080 &
+NODE_PATH=$(npm root -g) node e2e/ai-feedback.cjs   # browser checks need Playwright; one file per check
 ```
+
+The browser checks in `e2e/` read a sample Coros export from `e2e/fixtures/` (longitudes shifted for
+privacy, see its README). Set `TCX_DIR` to run the export-based checks on your own folder.
 
 ## Layout
 
@@ -91,6 +98,13 @@ npm test
 - Three weeks at 120% or more of the plan give a note: the plan never speeds up on its own, and regenerating
   would start from your real volume. Within four weeks of the race the note only says to keep to the plan.
 - Run summaries are backed up; the 5-second activity streams are not.
+- Weekly climbing is split between runs in fixed shares (long run 50%, climbing session 25%, one more
+  run 25%), each run capped at 400 m per hour. What a share cannot take goes to other runs on hills or
+  incline days that still have room: easy runs first, then the long run (never in the taper). Easy runs on
+  incline days can climb; nothing climbs on a flat day. If climbing is still short, the week says which days
+  can climb, and when setting one more flat day to hills would reach 85% the plan warns with that day
+  (`climbDaysTooFew`) instead of advising more runs.
+- A road long run is never shorter than 20 minutes, the same floor as easy runs, even in recovery weeks.
 
 - Weeks before the first uploaded run count as "no data", not as a break. With fewer than four full weeks of history the baseline is the average of the weeks there are.
 - Plans longer than 24 weeks hold the starting volume only for weeks the ramp does not need: the build must still reach its peak targets by the start of the peak phase.
