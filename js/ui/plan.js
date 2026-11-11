@@ -2,12 +2,13 @@
 import { generatePlan } from '../core/plan/generate.js';
 import { planCsv, stepLines, weekText, workoutText } from '../core/export.js';
 import { resolveTargets } from '../core/targets.js';
-import { WEEKDAYS, diffDays, nextMonday } from '../core/dates.js';
+import { WEEKDAYS, addDays, diffDays, nextMonday } from '../core/dates.js';
 import { compareRun, planAdvice, regenerateFrom, runsByWorkout, runsToUnlink, weekProgress, workoutStatus } from '../core/tracking.js';
 import { formatDuration } from '../core/units.js';
 import { canInsertTest, climbTrend, goalAdvice, insertTest, nextWorkoutDate, suggestThresholdUpdate, testResultFromRun } from '../core/suggest.js';
 import { earliestThreshold, thresholdForDate } from '../core/thresholds.js';
 import { aiReport } from '../core/aiExport.js';
+import { applyChanges, canUndo, editsLostByRegen, lockReason, undoLast } from '../core/edits.js';
 import { esc } from './util.js';
 
 const PHASE_LABEL = { base: 'Base', build: 'Build', peak: 'Peak', taper: 'Taper' };
@@ -32,7 +33,7 @@ async function copyText(text) {
 }
 
 export function mountPlan(el, { storage, today, getSettings, getHistory, goto, onUseThreshold = () => {}, isSettingsDirty = () => false, getBackupInfo = async () => null }) {
-  const state = { plan: null, messages: [], loaded: false, notice: null, confirmRegen: false, confirmNew: false, open: new Set(), runs: [], suggestState: {}, backup: null };
+  const state = { plan: null, messages: [], loaded: false, notice: null, confirmRegen: false, confirmNew: false, open: new Set(), runs: [], suggestState: {}, backup: null, editing: null, editMsg: null };
 
   const ctx = () => {
     const s = getSettings();
@@ -80,11 +81,12 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
       <p class="row">
         <button type="button" data-act="csv">Download CSV</button>
         <button type="button" data-act="copy-plan">Copy all weeks as text</button>
+        ${canUndo(state.plan) ? `<button type="button" data-act="undo" title="${esc(state.plan.undo.at(-1).label)}">Undo last change</button>` : ''}
       </p>
       ${aiExportHtml()}
       <p class="row">
         ${state.confirmRegen
-          ? `<span class="notice warn">Regenerate from ${esc(nextMonday(today))}? Weeks before that stay as they are. <button type="button" class="primary" data-act="regen-confirm">Yes, regenerate</button> <button type="button" data-act="cancel-regen">Cancel</button></span>`
+          ? `<span class="notice warn">Regenerate from ${esc(nextMonday(today))}? Weeks before that stay as they are.${editsLostByRegen(state.plan, nextMonday(today)) ? ` Your ${editsLostByRegen(state.plan, nextMonday(today))} edit${editsLostByRegen(state.plan, nextMonday(today)) === 1 ? '' : 's'} in those weeks will be replaced.` : ''} <button type="button" class="primary" data-act="regen-confirm">Yes, regenerate</button> <button type="button" data-act="cancel-regen">Cancel</button></span>`
           : '<button type="button" data-act="regen">Regenerate from next Monday</button>'}
         ${state.confirmNew
           ? '<span class="notice warn">Discard this plan and start a new one? Matched runs keep their record. <button type="button" class="primary" data-act="generate">Yes, start over</button> <button type="button" data-act="cancel-regen">Cancel</button></span>'
@@ -175,8 +177,61 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
       <header><strong>${esc(w.weekday)} ${date.getUTCDate()}/${date.getUTCMonth() + 1}</strong> <span class="code">${esc(w.code)}</span> ${esc(w.name)}
         <span class="muted small">${w.plannedMin} min${km}${climb}</span> ${statusTag}
         <button type="button" class="link" data-copy-workout="${esc(w.id)}">Copy</button>
-        ${canInsertTest(state.plan, w, today) ? `<button type="button" class="link" data-test="${esc(w.id)}">Replace with 30-min test</button>` : ''}</header>
+        ${canInsertTest(state.plan, w, today) ? `<button type="button" class="link" data-test="${esc(w.id)}">Replace with 30-min test</button>` : ''}
+        ${editable(w) && state.editing !== w.id ? `<button type="button" class="link" data-edit="${esc(w.id)}" aria-label="Edit ${esc(w.name)} on ${esc(w.date)}">Edit</button>` : ''}
+        ${w.edited ? '<span class="tag">edited</span>' : ''}</header>
+      ${state.editing === w.id ? editFormHtml(w, week) : ''}
+      ${state.editMsg?.id === w.id ? `<p class="notice ${state.editMsg.kind} small" role="status">${esc(state.editMsg.text)}</p>` : ''}
       ${body}${actual}</article>`;
+  }
+
+  function editable(w) {
+    return !lockReason(state.plan, w.id, { today, runs: state.runs });
+  }
+
+  function editFormHtml(w, week) {
+    const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    const days = DAYS.map((d, i) => ({ d, date: addDays(week.start, i) })).filter((x) => x.date >= today && x.date < state.plan.raceDate);
+    const run = w.role !== 'S';
+    return `<form class="edit" data-edit-form="${esc(w.id)}" onsubmit="return false">
+      <div class="row">
+        <label class="field"><span class="lbl">Day</span><select data-edit-day>${days.map((x) => `<option value="${x.d}" ${x.d === w.weekday ? 'selected' : ''}>${x.d} ${x.date.slice(8)}/${Number(x.date.slice(5, 7))}</option>`).join('')}</select></label>
+        ${run ? `<label class="field"><span class="lbl">Length (min)</span><input type="number" inputmode="numeric" min="15" max="360" step="5" value="${w.plannedMin}" data-edit-min style="width:6em"></label>` : ''}
+      </div>
+      <p class="row"><button type="button" class="primary" data-edit-do="save">Save</button>
+        ${run && w.code !== 'EZ' ? '<button type="button" data-edit-do="easy">Make it an easy run</button>' : ''}
+        <button type="button" data-edit-do="rest">Rest day instead</button>
+        <button type="button" data-edit-do="cancel">Cancel</button></p>
+      <p class="muted small">Edits apply to this plan only. "Regenerate" rebuilds the weeks it covers, edits included.</p>
+    </form>`;
+  }
+
+  function scaleHtml(week) {
+    if (!week.workouts.some((w) => w.role !== 'S' && w.role !== 'RACE' && editable(w))) return '';
+    return `<p class="row small"><label>Adjust this week: <select data-scale="${week.n}">
+      <option value="">choose…</option><option value="0.7">30% less</option><option value="0.8">20% less</option><option value="0.9">10% less</option><option value="1.05">5% more</option><option value="1.1">10% more</option></select></label>
+      <button type="button" class="link" data-scale-do="${week.n}">Apply</button></p>`;
+  }
+
+  async function commit(changes, { focus = null, label = null } = {}) {
+    const warnFail = [];
+    const r = applyChanges(state.plan, changes, { today, runs: state.runs, source: 'manual', label });
+    const res = r.results[r.results.length - 1];
+    if (!r.results.some((x) => x.ok)) {
+      state.editMsg = { id: focus, kind: 'error', text: res.error };
+      return render();
+    }
+    state.plan = r.plan;
+    state.editing = null;
+    const mv = changes.find((c) => c.op === 'move');
+    const moved = mv && r.results.find((x) => x.change === mv)?.ok ? mv.workout.replace(/^(w\d+-)[A-Z][a-z]{2}/, `$1${mv.to}`) : null;
+    if (r.results.some((x) => !x.ok)) r.results.filter((x) => !x.ok).forEach((x) => warnFail.push(x.error));
+    const warn = [...warnFail, ...r.results.flatMap((x) => x.warnings ?? [])];
+    state.editMsg = { id: moved ?? focus, kind: warn.length ? 'warn' : 'ok', text: warn.length ? `Saved, but note: ${warn.join(' ')}` : `Saved: ${res.summary}.` };
+    if (storage) {
+      try { await storage.savePlan(state.plan); } catch (err) { state.editMsg = { id: focus, kind: 'error', text: `The change could not be saved: ${err.message}` }; }
+    }
+    render();
   }
 
   function weekHtml(week) {
@@ -194,6 +249,8 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
       <p class="muted small">${esc(week.reason)}</p>
       ${week.flags.map((f) => `<p class="notice warn small">${esc(f)}</p>`).join('')}
       <p><button type="button" class="link" data-copy-week="${week.n}">Copy this week as text</button></p>
+      ${scaleHtml(week)}
+      ${state.editMsg?.id === `week-${week.n}` ? `<p class="notice ${state.editMsg.kind} small" role="status">${esc(state.editMsg.text)}</p>` : ''}
       ${week.workouts.map((w) => workoutHtml(w, week)).join('')}
     </details>`;
   }
@@ -258,6 +315,10 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
     return [null, null];
   }
 
+  function keepOpen() {
+    [...el.querySelectorAll('details[open]')].forEach((d) => state.open.add(Number(d.dataset.week)));
+  }
+
   async function flash(ok, what, where = 'your notes or the Coros app') {
     state.notice = ok ? { kind: 'ok', text: `${what} copied. Paste it into ${where}.` } : { kind: 'error', text: 'Copying was blocked by the browser. Select the text manually.' };
     const keep = [...el.querySelectorAll('details[open]')].map((d) => Number(d.dataset.week));
@@ -277,8 +338,40 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
   }, true);
 
   el.addEventListener('click', async (e) => {
-    const b = e.target.closest('[data-act],[data-copy-workout],[data-copy-week],[data-go],[data-sg],[data-test]');
+    const b = e.target.closest('[data-act],[data-copy-workout],[data-copy-week],[data-go],[data-sg],[data-test],[data-edit],[data-edit-do],[data-scale-do]');
     if (!b) return;
+    if (b.dataset.edit) { state.editing = b.dataset.edit; state.editMsg = null; keepOpen(); return render(); }
+    if (b.dataset.editDo) {
+      const form = b.closest('[data-edit-form]');
+      const id = form.dataset.editForm;
+      const w = state.plan.weeks.flatMap((x) => x.workouts).find((x) => x.id === id);
+      keepOpen();
+      const act = b.dataset.editDo;
+      if (act === 'cancel') { state.editing = null; return render(); }
+      if (act === 'easy') return commit([{ op: 'easy', workout: id, minutes: Number(form.querySelector('[data-edit-min]')?.value) || undefined }], { focus: id });
+      if (act === 'rest') return commit([{ op: 'rest', workout: id }], { focus: `week-${w.week}` });
+      const changes = [];
+      const min = Number(form.querySelector('[data-edit-min]')?.value);
+      if (w.role !== 'S' && Number.isFinite(min) && min !== w.plannedMin) changes.push({ op: 'duration', workout: id, minutes: min });
+      const day = form.querySelector('[data-edit-day]')?.value;
+      if (day && day !== w.weekday) changes.push({ op: 'move', workout: id, to: day });
+      if (!changes.length) { state.editing = null; return render(); }
+      // the move uses the id after a length change, which stays the same
+      return commit(changes, { focus: id });
+    }
+    if (b.dataset.scaleDo) {
+      const n = Number(b.dataset.scaleDo);
+      const f = Number(el.querySelector(`[data-scale="${n}"]`)?.value);
+      keepOpen();
+      if (!f) { state.editMsg = { id: `week-${n}`, kind: 'error', text: 'Choose how much to change the week first.' }; return render(); }
+      const r = applyChanges(state.plan, [{ op: 'scaleWeek', week: n, factor: f }], { today, runs: state.runs, source: 'manual' });
+      const res = r.results[0];
+      if (!res.ok) { state.editMsg = { id: `week-${n}`, kind: 'error', text: res.error }; return render(); }
+      state.plan = r.plan;
+      state.editMsg = { id: `week-${n}`, kind: res.warnings.length ? 'warn' : 'ok', text: res.warnings.length ? `Saved, but note: ${res.warnings.join(' ')}` : `Saved: ${res.summary}.` };
+      if (storage) await storage.savePlan(state.plan);
+      return render();
+    }
     if (b.dataset.go) return goto(b.dataset.go, b.dataset.tab);
     if (b.dataset.test) {
       state.plan = insertTest(state.plan, b.dataset.test);
@@ -315,6 +408,14 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
       a.click();
       setTimeout(() => URL.revokeObjectURL(a.href), 1000);
       return;
+    }
+    if (act === 'undo') {
+      const label = state.plan.undo.at(-1).label;
+      state.plan = undoLast(state.plan);
+      state.editMsg = null;
+      if (storage) await storage.savePlan(state.plan);
+      state.notice = { kind: 'ok', text: `Undone: ${label}.` };
+      return render();
     }
     if (act === 'ai-copy') return flash(await copyText(await aiText()), 'The report', 'an AI chat');
     if (act === 'ai-download') {

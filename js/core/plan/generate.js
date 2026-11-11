@@ -630,6 +630,7 @@ export function generatePlan(settingsIn, history, { today, id = 'main', now = nu
     race: { ...race, kmEffort: trail ? params.effort : null, expectedDurationMin: trail ? params.TrRange : null, predictedSec: trail ? null : params.predictedSec },
     goalPaceSecPerKm: goalPace, easyPaceSecPerKm: easyPace, startDate: params.startMonday, raceDate,
     phases: vol.phases, peak: { km: vol.peakKm, hours: vol.peakHours, vertM: vol.peakVertM, longRunMin: params.peakLongMin ?? null, longRunKm: params.peakLong ?? null },
+    easyPaceSecPerKm: trail ? null : easyPace,
     messages, // kept with the plan so the warnings are still shown after a reload
     settingsSnapshot: { runsPerWeek: v.effectiveRunsPerWeek, longRunDay: schedule.longRunDay, dayTerrain: terrain, unavailableDays: schedule.unavailableDays ?? [], experience: settings.athlete.experience },
     weeks,

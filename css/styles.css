@@ -82,3 +82,6 @@ details.week > summary { cursor: pointer; margin: 0; }
 .steps { margin: 6px 0 0; padding-left: 22px; font-size: .9rem; }
 .notice.small { font-size: .85rem; padding: 6px 10px; margin: 6px 0; }
 .top { flex-wrap: wrap; }
+
+form.edit { border: 1px solid var(--line, #ddd); border-radius: 8px; padding: 8px 10px; margin: 6px 0; }
+form.edit .field { margin-right: 12px; }
