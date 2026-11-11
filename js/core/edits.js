@@ -117,12 +117,16 @@ function ruleProblems(plan, week, w, before, { moved = false, oldMin = null } = 
     if (prevLong > 0 && w.plannedMin > Math.max(prevLong * 1.1, prevLong + 15)) out.push(`The long run would grow from ${prevLong} to ${w.plannedMin} minutes, faster than the plan allows.`);
   }
   if (w && w.plannedVertM && w.plannedVertM > (400 * w.plannedMin) / 60 + 0.5) out.push('More than 400 m of climbing per hour.');
+  if (moved && w && w.role !== 'S' && w.plannedVertM > 0 && plan.mode === 'trail' && !['hills', 'incline'].includes(w.terrain)) {
+    out.push(`${w.name} has ${w.plannedVertM} m of climbing planned, but ${w.weekday} is a flat day.`);
+  }
   return out;
 }
 
 /**
  * Applies one change to a copy of the plan. A change is one of:
  *   { op: 'move', workout, to: 'Mon'..'Sun' }      within the same week
+ *   { op: 'swap', workout, with }                 two workouts of one week trade days
  *   { op: 'duration', workout, minutes }
  *   { op: 'easy', workout, minutes? }             becomes an easy run (default: same length, at most 45 min)
  *   { op: 'rest', workout }                       removed: a rest day
@@ -134,6 +138,7 @@ export function applyChange(planIn, change, { today, source = 'manual', runs = [
   const fail = (error) => ({ ok: false, error, warnings: [] });
   const op = change?.op;
   if (op === 'scaleWeek') return scaleWeek(plan, change, { today, source, runs, at });
+  if (op === 'swap') return swapWorkouts(plan, change, { today, source, runs, at });
   if (!['move', 'duration', 'easy', 'rest'].includes(op)) return fail(`Unknown change "${op}".`);
   const lock = lockReason(plan, change.workout, { today, source, runs });
   if (lock) return fail(lock);
@@ -187,6 +192,45 @@ export function applyChange(planIn, change, { today, source = 'manual', runs = [
   if (w && op !== 'rest') w.edited = true;
   retotal(plan, week);
   const problems = ruleProblems(plan, week, op === 'rest' ? null : w, before, { moved: op === 'move', oldMin });
+  if (problems.length && source === 'ai') return fail(problems.join(' '));
+  log(plan, { source, change, summary, at, warnings: problems });
+  return { ok: true, plan, warnings: problems, summary };
+}
+
+// Two workouts of one week trade days. A run swaps with a run and a strength session with a strength
+// session; a workout going to an empty day is a move. Same locks, warnings and undo as any other edit.
+function swapWorkouts(plan, change, { today, source, runs, at }) {
+  const fail = (error) => ({ ok: false, error, warnings: [] });
+  const idA = String(change.workout ?? '');
+  const idB = String(change.with ?? '');
+  if (!idB) return fail('Give the other workout to swap with.');
+  if (idA === idB) return fail('Choose two different workouts to swap.');
+  for (const id of [idA, idB]) {
+    const lock = lockReason(plan, id, { today, source, runs });
+    if (lock) return fail(lock);
+  }
+  const fa = find(plan, idA);
+  const fb = find(plan, idB);
+  if (fa.week !== fb.week) return fail('Swapping works within one week. Move a workout to a day in its own week instead.');
+  const { week, w: a } = fa;
+  const b = fb.w;
+  if (isRun(a) !== isRun(b)) return fail('Swap a run with a run, or a strength session with a strength session.');
+  if (a.date === b.date) return fail('Both workouts are already on the same day.');
+  const idFor = (w, day) => `w${week.n}-${day}${isRun(w) ? (w.code === 'SHK' ? '-SHK' : '') : '-S'}`;
+  const newA = idFor(a, b.weekday);
+  const newB = idFor(b, a.weekday);
+  if (plan.weeks.some((x) => x.workouts.some((y) => y !== a && y !== b && (y.id === newA || y.id === newB)))) return fail('One of those days already has a workout with the same id.');
+  const before = { plannedMin: week.plannedMin, plannedKm: week.plannedKm };
+  const labelA = `${a.weekday} ${a.name}`;
+  const labelB = `${b.weekday} ${b.name}`;
+  const dayTerrain = plan.settingsSnapshot?.dayTerrain ?? {};
+  const [da, dateA, dateB] = [a.weekday, a.date, b.date];
+  Object.assign(a, { date: dateB, weekday: b.weekday, id: newA, terrain: isRun(a) ? dayTerrain[b.weekday] ?? a.terrain : a.terrain, edited: true });
+  Object.assign(b, { date: dateA, weekday: da, id: newB, terrain: isRun(b) ? dayTerrain[da] ?? b.terrain : b.terrain, edited: true });
+  sortWeek(week);
+  retotal(plan, week);
+  const problems = [...new Set([a, b].flatMap((w) => ruleProblems(plan, week, w, before, { moved: true })))];
+  const summary = `${labelA} swapped with ${labelB}`;
   if (problems.length && source === 'ai') return fail(problems.join(' '));
   log(plan, { source, change, summary, at, warnings: problems });
   return { ok: true, plan, warnings: problems, summary };

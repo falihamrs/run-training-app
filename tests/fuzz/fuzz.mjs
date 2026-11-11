@@ -16,7 +16,7 @@ const rnd = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 214748364
 const pick = (a) => a[Math.floor(rnd() * a.length)];
 const int = (lo, hi) => lo + Math.floor(rnd() * (hi - lo + 1));
 const fails = [];
-const stats = { plans: 0, refused: 0, edits: 0, editOk: 0, aiOk: 0, regens: 0, parses: 0, previews: 0 };
+const stats = { plans: 0, refused: 0, edits: 0, editOk: 0, swapOk: 0, swapAiOk: 0, aiOk: 0, regens: 0, parses: 0, previews: 0 };
 const bad = (area, label, msg) => { if (fails.length < 40) fails.push(`[${area}] ${label}: ${msg}`); };
 const nextMon = (d) => { let x = addDays(d, 1); while (new Date(x + 'T00:00Z').getUTCDay() !== 1) x = addDays(x, 1); return x; };
 
@@ -63,13 +63,18 @@ function checkPlan(p, s, label, area) {
 function randomChange(plan) {
   const all = plan.weeks.flatMap((w) => w.workouts).filter((x) => x.role !== 'RACE');
   const w = pick(all.length ? all : [{ id: 'w1-Mon' }]);
-  switch (int(0, 6)) {
+  switch (int(0, 8)) {
     case 0: return { op: 'move', workout: w.id, to: pick([...WEEKDAYS, 'xyz', '']) };
     case 1: return { op: 'duration', workout: w.id, minutes: pick([int(5, 400), '30', null, -1, 1e9]) };
     case 2: return { op: 'easy', workout: w.id, minutes: pick([undefined, int(10, 120)]) };
     case 3: return { op: 'rest', workout: w.id };
     case 4: return { op: 'scaleWeek', week: int(0, plan.weeks.length + 1), factor: pick([0.5, 0.7, 0.9, 1, 1.1, 1.3, 'x']) };
     case 5: return { op: pick(['delete', null, 'MOVE']), workout: w.id };
+    case 6: { // a partner from the same week most of the time, so swaps actually apply
+      const week = plan.weeks.find((x) => x.workouts.some((y) => y.id === w.id));
+      return { op: 'swap', workout: w.id, with: pick(week && rnd() < 0.85 ? week.workouts : all).id };
+    }
+    case 7: return { op: 'swap', workout: w.id, with: pick([undefined, '', w.id, 'w999-Mon', pick(all).id]) };
     default: return { op: 'move', workout: 'w999-Mon', to: 'Tue' };
   }
 }
@@ -95,12 +100,17 @@ for (let i = 0; i < N; i++) {
     for (const res of out.results) {
       if (!res.ok) { if (!res.error) bad('edits', label, `refused without text ${JSON.stringify(res.change)}`); continue; }
       stats.editOk++;
+      if (res.change.op === 'swap') { stats.swapOk++; if (source === 'ai') stats.swapAiOk++; }
       if (source === 'ai') {
         stats.aiOk++;
         if (res.warnings.length) bad('edits', label, `AI change applied with warnings ${res.warnings}`);
         const id = res.change.workout;
         const w = out.plan.weeks.flatMap((x) => x.workouts).find((x) => x.id === id) ?? plan.weeks.flatMap((x) => x.workouts).find((x) => x.id === id);
         if (w && w.date < nextMon(inPlan) && res.change.op !== 'scaleWeek') bad('edits', label, `AI changed ${id} (${w.date}) before next Monday of ${inPlan}`);
+        if (res.change.op === 'swap') {
+          const all = out.plan.weeks.flatMap((x) => x.workouts);
+          for (const x of all) if (x.edited && x.date < nextMon(inPlan) && !plan.weeks.flatMap((y) => y.workouts).find((y) => y.id === x.id)?.edited) bad('edits', label, `AI swap touched ${x.id} (${x.date}) before next Monday of ${inPlan}`);
+        }
       }
     }
     if (out.plan !== plan) {

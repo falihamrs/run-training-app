@@ -8,7 +8,7 @@ import { parsePace, formatPace } from './units.js';
 export const BLOCK_TAG = 'plan-changes';
 const TERRAINS = ['flat', 'hills', 'incline'];
 const OP_ALIASES = {
-  move: 'move', duration: 'duration', length: 'duration', minutes: 'duration', easy: 'easy', makeeasy: 'easy',
+  move: 'move', swap: 'swap', exchange: 'swap', switch: 'swap', duration: 'duration', length: 'duration', minutes: 'duration', easy: 'easy', makeeasy: 'easy',
   rest: 'rest', remove: 'rest', skip: 'rest', scaleweek: 'scaleWeek', scale: 'scaleWeek', setting: 'setting', settings: 'setting',
   threshold: 'threshold', thresholds: 'threshold',
 };
@@ -25,6 +25,7 @@ export function changeFormatText(plan, today) {
     '  "changes": [',
     '    { "op": "duration", "workout": "w6-Sun", "minutes": 85, "reason": "why" },',
     '    { "op": "move", "workout": "w6-Fri", "to": "Sat", "reason": "why" },',
+    '    { "op": "swap", "workout": "w6-Tue", "with": "w6-Thu", "reason": "why" },',
     '    { "op": "easy", "workout": "w7-Tue", "minutes": 40, "reason": "why" },',
     '    { "op": "rest", "workout": "w7-Thu", "reason": "why" },',
     '    { "op": "scaleWeek", "week": 8, "factor": 0.9, "reason": "why" },',
@@ -36,7 +37,7 @@ export function changeFormatText(plan, today) {
     '',
     'Rules the app enforces:',
     `- Workout changes apply from ${from} (next Monday) onwards; use the workout ids shown in [brackets] above.`,
-    '- "move" stays within the same week (to: Mon…Sun). "duration": 15–360 minutes; quality sessions can only get shorter. "easy" turns a session into an easy run. "rest" removes it.',
+    '- "move" stays within the same week (to: Mon…Sun). "swap" trades the days of two sessions in the same week (two runs, or two strength sessions). "duration": 15–360 minutes; quality sessions can only get shorter. "easy" turns a session into an easy run. "rest" removes it.',
     '- "scaleWeek": factor 0.7–1.1. A week may not go more than 10% over its target, the long run may not grow faster than the plan allows, and no hard session may sit next to another.',
     '- "setting" fields: runsPerWeek (3–7), longRunDay (Mon…Sun), terrain.Mon … terrain.Sun (flat, hills, incline), unavailable.Mon … unavailable.Sun (true/false). Setting changes rebuild the plan from next Monday, so workout ids after that may change: when you change settings, prefer week-level changes (scaleWeek) over single workouts.',
     '- "threshold" is shown to me as a suggestion only (lthr in bpm, pace as m:ss per km, from as a date).',
@@ -113,6 +114,10 @@ function normalize(raw) {
   if (c.workout == null && c.id != null) c.workout = c.id;
   if (c.workout != null) c.workout = String(c.workout).trim();
   if (op === 'move' && c.to == null && c.day != null) c.to = c.day;
+  if (op === 'swap') {
+    if (c.with == null) c.with = c.other ?? c.workout2 ?? c.to ?? null;
+    if (c.with != null) c.with = String(c.with).trim();
+  }
   if (op === 'duration' && c.minutes == null && c.min != null) c.minutes = c.min;
   if (c.reason != null) c.reason = String(c.reason).slice(0, 500);
   return c;
@@ -193,6 +198,7 @@ function describe(plan, c) {
   const what = w ? `${w.weekday} ${w.date} ${w.name}` : c.workout ? `workout ${c.workout}` : '';
   switch (c.op) {
     case 'move': return `${what} → ${c.to}`;
+    case 'swap': return `${what} ⇄ ${c.with ?? '?'}`;
     case 'duration': return `${what} → ${c.minutes} min`;
     case 'easy': return `${what} → easy run${c.minutes ? ` ${c.minutes} min` : ''}`;
     case 'rest': return `${what} → rest day`;

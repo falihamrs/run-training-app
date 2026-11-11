@@ -115,3 +115,67 @@ test('scale a week, batches, undo, and edits lost by regenerating', () => {
   assert.ok(editsLostByRegen(r.plan, wk(road, 5).start) > 0);
   assert.equal(editsLostByRegen(r.plan, wk(road, 8).start), 0);
 });
+
+// ---- swapping two workouts of one week
+const futureWeek = (p) => p.weeks.find((w) => w.n >= 3 && w.workouts.filter((x) => x.role !== 'S' && x.role !== 'RACE' && x.date > today).length >= 3);
+
+test('swap: two runs trade days, ids and terrain, totals stay, undo restores', () => {
+  const week = futureWeek(road);
+  const [a, b] = week.workouts.filter((x) => x.role !== 'S' && x.role !== 'RACE');
+  const r = applyChanges(road, [{ op: 'swap', workout: a.id, with: b.id }], { today });
+  assert.ok(r.results[0].ok, r.results[0].error);
+  const nw = wk(r.plan, week.n);
+  const na = nw.workouts.find((x) => x.code === a.code && x.plannedMin === a.plannedMin);
+  const nb = nw.workouts.find((x) => x.code === b.code && x.plannedMin === b.plannedMin);
+  assert.deepEqual([na.date, na.weekday, na.id], [b.date, b.weekday, `w${week.n}-${b.weekday}`]);
+  assert.deepEqual([nb.date, nb.weekday, nb.id], [a.date, a.weekday, `w${week.n}-${a.weekday}`]);
+  assert.ok(na.edited && nb.edited);
+  assert.equal(nw.plannedMin, week.plannedMin);
+  assert.equal(nw.plannedKm, week.plannedKm);
+  assert.deepEqual(nw.workouts.map((x) => x.date), [...nw.workouts.map((x) => x.date)].sort());
+  assert.equal(new Set(r.plan.weeks.flatMap((w) => w.workouts.map((x) => x.id))).size, r.plan.weeks.flatMap((w) => w.workouts).length);
+  assert.match(r.plan.edits.at(-1).summary, /swapped with/);
+  assert.equal(get(road, a.id).date, a.date); // original untouched
+  assert.deepEqual(undoLast(r.plan).weeks, road.weeks);
+});
+
+test('swap: refused across weeks, run with strength, past, same workout, matched run, AI this week', () => {
+  const week = futureWeek(road);
+  const runsW = week.workouts.filter((x) => x.role !== 'S' && x.role !== 'RACE');
+  const [a, b] = runsW;
+  const err = (c, opts = {}) => applyChange(road, c, { today, ...opts }).error;
+  const other = wk(road, week.n + 1).workouts.find((x) => x.role === 'E');
+  assert.match(err({ op: 'swap', workout: a.id, with: other.id }), /within one week/);
+  const strength = road.weeks.flatMap((w) => w.workouts).find((x) => x.role === 'S' && x.date > today);
+  if (strength) {
+    const sameWeekRun = wk(road, strength.week).workouts.find((x) => x.role === 'E');
+    assert.match(err({ op: 'swap', workout: strength.id, with: sameWeekRun.id }), /run with a run/);
+  }
+  assert.match(err({ op: 'swap', workout: a.id, with: a.id }), /two different/);
+  assert.match(err({ op: 'swap', workout: a.id }), /other workout/);
+  assert.match(err({ op: 'swap', workout: a.id, with: 'w99-Mon' }), /no workout/);
+  const past = wk(road, 1).workouts.find((x) => x.role !== 'S' && x.date < today);
+  if (past) assert.match(err({ op: 'swap', workout: past.id, with: wk(road, 1).workouts.find((x) => x.role === 'E' && x.date > today).id }), /past/);
+  assert.match(err({ op: 'swap', workout: a.id, with: b.id }, { runs: [{ matchedWorkoutId: b.id }] }), /matched/);
+  const cur = wk(road, 1).workouts.filter((x) => x.role !== 'S' && x.role !== 'RACE' && x.date > today);
+  if (cur.length >= 2) assert.match(err({ op: 'swap', workout: cur[0].id, with: cur[1].id }, { source: 'ai' }), /next Monday/);
+});
+
+test('swap: a climbing run going to a flat day warns by hand and is refused from an AI', () => {
+  const week = trail.weeks.find((w) => w.n >= 4 && w.workouts.some((x) => x.role === 'L' && x.plannedVertM > 0));
+  const long = week.workouts.find((x) => x.role === 'L');
+  const flat = week.workouts.find((x) => x.role !== 'S' && x.role !== 'L' && x.terrain === 'flat' && !x.plannedVertM);
+  assert.ok(long && flat, 'the plan has a climbing long run and a flat-day run in one week');
+  const hand = applyChange(trail, { op: 'swap', workout: long.id, with: flat.id }, { today });
+  assert.ok(hand.ok, hand.error);
+  assert.ok(hand.warnings.some((m) => /flat day/.test(m)), hand.warnings.join(' | '));
+  const ai = applyChange(trail, { op: 'swap', workout: long.id, with: flat.id }, { today, source: 'ai' });
+  assert.equal(ai.ok, false);
+  assert.match(ai.error, /flat day/);
+  // moving it by hand to a free flat day gets the same warning
+  const free = ['Mon', 'Tue', 'Thu'].find((d) => trail.settingsSnapshot.dayTerrain[d] === 'flat' && !week.workouts.some((x) => x.weekday === d && x.role !== 'S'));
+  assert.ok(free, 'the week has a free flat day');
+  const mv = applyChange(trail, { op: 'move', workout: long.id, to: free }, { today });
+  assert.ok(mv.ok, mv.error);
+  assert.ok(mv.warnings.some((m) => /flat day/.test(m)), mv.warnings.join(' | '));
+});

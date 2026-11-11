@@ -79,6 +79,25 @@ details.week > summary { cursor: pointer; margin: 0; }
 .workout header { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
 .workout .code { font-size: .7rem; font-weight: 700; padding: 1px 6px; border-radius: 4px; background: var(--bg); border: 1px solid var(--line); }
 .workout.today { background: var(--ok-bg); }
+
+/* week strip: drag a session to another day, or tap it and then tap a day */
+.daystrip { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; margin: 8px 0 2px; }
+.daystrip .day { border: 1px dashed var(--line); border-radius: 6px; padding: 4px; min-height: 3.6em; display: flex; flex-direction: column; gap: 3px; align-items: stretch; font-size: .72rem; min-width: 0; }
+.daystrip .day.fixed { border-style: solid; background: var(--bg); opacity: .8; }
+.daystrip .dlabel { font-weight: 600; color: var(--muted); white-space: nowrap; }
+.daystrip .rest { font-size: .7rem; }
+.daystrip .item { font: inherit; font-size: .72rem; line-height: 1.2; padding: 3px 4px; border-radius: 4px; border: 1px solid var(--line); background: var(--card); color: var(--text); text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.daystrip button.item { cursor: grab; touch-action: manipulation; }
+.daystrip button.item:active { cursor: grabbing; }
+.daystrip .item.role-L, .daystrip .item.role-M { border-left: 3px solid var(--accent); }
+.daystrip .item.role-Q1, .daystrip .item.role-Q2 { border-left: 3px solid var(--warn); }
+.daystrip .item.role-S { border-style: dashed; }
+.daystrip .item.fixed { opacity: .65; }
+.daystrip .item.picked { outline: 2px solid var(--accent); background: var(--ok-bg); }
+.daystrip .item.dragging { opacity: .4; }
+.daystrip .day.over { outline: 2px solid var(--accent); background: var(--ok-bg); }
+.dragging-session .daystrip .day[data-drop] { border-color: var(--accent); }
+@media (max-width: 520px) { .daystrip .item { font-size: .66rem; padding: 3px 2px; white-space: normal; } .daystrip .item .min { display: block; color: var(--muted); } .daystrip .dlabel { font-size: .66rem; } }
 .steps { margin: 6px 0 0; padding-left: 22px; font-size: .9rem; }
 .notice.small { font-size: .85rem; padding: 6px 10px; margin: 6px 0; }
 .top { flex-wrap: wrap; }

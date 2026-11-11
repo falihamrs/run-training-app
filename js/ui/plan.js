@@ -34,7 +34,7 @@ async function copyText(text) {
 }
 
 export function mountPlan(el, { storage, today, getSettings, getHistory, goto, onUseThreshold = () => {}, isSettingsDirty = () => false, getBackupInfo = async () => null, applySettings = null }) {
-  const state = { plan: null, messages: [], loaded: false, notice: null, confirmRegen: false, confirmNew: false, open: new Set(), runs: [], suggestState: {}, backup: null, editing: null, editMsg: null, ai: null };
+  const state = { plan: null, messages: [], loaded: false, notice: null, confirmRegen: false, confirmNew: false, open: new Set(), runs: [], suggestState: {}, backup: null, editing: null, editMsg: null, ai: null, pick: null };
 
   const ctx = () => {
     const s = getSettings();
@@ -331,7 +331,7 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
       <button type="button" class="link" data-scale-do="${week.n}">Apply</button></p>`;
   }
 
-  async function commit(changes, { focus = null, label = null } = {}) {
+  async function commit(changes, { focus = null, label = null, fixed = false } = {}) {
     const warnFail = [];
     const r = applyChanges(state.plan, changes, { today, runs: state.runs, source: 'manual', label });
     const res = r.results[r.results.length - 1];
@@ -342,7 +342,7 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
     state.plan = r.plan;
     state.editing = null;
     const mv = changes.find((c) => c.op === 'move');
-    const moved = mv && r.results.find((x) => x.change === mv)?.ok ? mv.workout.replace(/^(w\d+-)[A-Z][a-z]{2}/, `$1${mv.to}`) : null;
+    const moved = !fixed && mv && r.results.find((x) => x.change === mv)?.ok ? mv.workout.replace(/^(w\d+-)[A-Z][a-z]{2}/, `$1${mv.to}`) : null;
     if (r.results.some((x) => !x.ok)) r.results.filter((x) => !x.ok).forEach((x) => warnFail.push(x.error));
     const warn = [...warnFail, ...r.results.flatMap((x) => x.warnings ?? [])];
     state.editMsg = { id: moved ?? focus, kind: warn.length ? 'warn' : 'ok', text: warn.length ? `Saved, but note: ${warn.join(' ')}` : `Saved: ${res.summary}.` };
@@ -350,6 +350,57 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
       try { await storage.savePlan(state.plan); } catch (err) { state.editMsg = { id: focus, kind: 'error', text: `The change could not be saved: ${err.message}` }; }
     }
     render();
+  }
+
+  // ---------- week strip: drag a session to another day (move) or onto another session (swap) ----------
+
+  function stripHtml(week) {
+    const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    const cells = DAYS.map((d, i) => {
+      const date = addDays(week.start, i);
+      const open = !week.locked && date >= today && date < state.plan.raceDate;
+      const items = week.workouts.filter((w) => w.date === date).map((w) => {
+        const label = w.role === 'S' || w.role === 'RACE' ? esc(w.code) : `${esc(w.code)}<span class="min"> ${w.plannedMin}′</span>`;
+        const cls = `item role-${esc(w.role)}${state.pick === w.id ? ' picked' : ''}`;
+        if (!editable(w)) return `<span class="${cls} fixed" title="${esc(w.name)}">${label}</span>`;
+        const aria = `${w.name} on ${d}, ${w.plannedMin} minutes. ${state.pick === w.id ? 'Picked up. Press another day to move it there, or a session to swap.' : 'Press to pick it up, then press another day or session.'}`;
+        return `<button type="button" class="${cls}" draggable="true" data-pick="${esc(w.id)}" aria-pressed="${state.pick === w.id}" aria-label="${esc(aria)}" title="${esc(w.name)}">${label}</button>`;
+      }).join('');
+      return `<div class="day${open ? '' : ' fixed'}${items ? '' : ' empty'}" data-day="${d}" data-week="${week.n}" ${open ? 'data-drop' : ''}>
+        <span class="dlabel">${d} ${Number(date.slice(8))}</span>${items || '<span class="muted rest">rest</span>'}</div>`;
+    }).join('');
+    const hint = state.pick && state.plan.weeks.find((x) => x.workouts.some((w) => w.id === state.pick))?.n === week.n
+      ? '<p class="small" role="status">Now press the day to move it to, or a session to swap with. Press Escape to cancel.</p>'
+      : '<p class="muted small">Drag a session to another day to move it, or onto another session to swap them. On a phone, tap a session, then tap the day.</p>';
+    return `<div class="daystrip" role="group" aria-label="Week ${week.n} days">${cells}</div>${hint}`;
+  }
+
+  // render() rebuilds the page, so keep keyboard focus on the session that was picked or moved
+  function focusItem(id) {
+    const wk = weekOf(id);
+    const w = wk?.workouts.find((x) => x.id === id);
+    el.querySelector(`[data-pick="${CSS.escape(id)}"]`)?.focus();
+    return w;
+  }
+
+  function weekOf(id) {
+    return state.plan.weeks.find((x) => x.workouts.some((w) => w.id === id));
+  }
+
+  /** Moves a workout to a day of its own week, or swaps it with the session of the same kind already there. */
+  async function dropWorkout(id, day) {
+    state.pick = null;
+    const week = weekOf(id);
+    if (!week) return render();
+    const w = week.workouts.find((x) => x.id === id);
+    const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    const date = addDays(week.start, DAYS.indexOf(day));
+    keepOpen();
+    if (date === w.date) return render();
+    const other = week.workouts.find((x) => x.date === date && x.id !== id && (x.role === 'S') === (w.role === 'S'));
+    const changes = other ? [{ op: 'swap', workout: id, with: other.id }] : [{ op: 'move', workout: id, to: day }];
+    await commit(changes, { focus: `week-${week.n}`, fixed: true });
+    focusItem(id.replace(/^(w\d+-)[A-Z][a-z]{2}/, `$1${day}`)) ?? focusItem(id);
   }
 
   function weekHtml(week) {
@@ -367,6 +418,7 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
       <p class="muted small">${esc(week.reason)}</p>
       ${week.flags.map((f) => `<p class="notice warn small">${esc(f)}</p>`).join('')}
       <p><button type="button" class="link" data-copy-week="${week.n}">Copy this week as text</button></p>
+      ${stripHtml(week)}
       ${scaleHtml(week)}
       ${state.editMsg?.id === `week-${week.n}` ? `<p class="notice ${state.editMsg.kind} small" role="status">${esc(state.editMsg.text)}</p>` : ''}
       ${week.workouts.map((w) => workoutHtml(w, week)).join('')}
@@ -471,6 +523,68 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
     const n = Number(d.dataset.week);
     if (d.open) { state.open.add(n); state.open.delete(-n); } else { state.open.delete(n); state.open.add(-n); }
   }, true);
+
+  // drag and drop (mouse) and tap-to-pick (touch, keyboard) on the week strip
+  el.addEventListener('dragstart', (e) => {
+    const b = e.target.closest?.('[data-pick]');
+    if (!b) return;
+    state.pick = null;
+    e.dataTransfer.setData('text/plain', b.dataset.pick);
+    e.dataTransfer.effectAllowed = 'move';
+    b.classList.add('dragging');
+    el.classList.add('dragging-session');
+  });
+  el.addEventListener('dragend', () => {
+    el.classList.remove('dragging-session');
+    el.querySelectorAll('.dragging, .over').forEach((x) => x.classList.remove('dragging', 'over'));
+  });
+  el.addEventListener('dragover', (e) => {
+    const cell = e.target.closest?.('[data-drop]');
+    if (!cell || !e.dataTransfer.types.includes('text/plain')) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    el.querySelectorAll('.over').forEach((x) => { if (x !== cell) x.classList.remove('over'); });
+    cell.classList.add('over');
+  });
+  el.addEventListener('dragleave', (e) => {
+    const cell = e.target.closest?.('[data-drop]');
+    if (cell && !cell.contains(e.relatedTarget)) cell.classList.remove('over');
+  });
+  el.addEventListener('drop', (e) => {
+    const cell = e.target.closest?.('[data-drop]');
+    const id = e.dataTransfer.getData('text/plain');
+    el.classList.remove('dragging-session');
+    if (!cell || !id || !weekOf(id)) return;
+    e.preventDefault();
+    if (weekOf(id).n !== Number(cell.dataset.week)) { state.editMsg = { id: `week-${weekOf(id).n}`, kind: 'error', text: 'A session can only move within its own week.' }; keepOpen(); return render(); }
+    dropWorkout(id, cell.dataset.day);
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || !state.pick || !el.isConnected) return;
+    const id = state.pick;
+    state.pick = null; keepOpen(); render(); focusItem(id);
+  });
+  el.addEventListener('click', (e) => {
+    const item = e.target.closest('[data-pick]');
+    const cell = e.target.closest('[data-drop]');
+    if (!item && !cell) return;
+    const picked = state.pick;
+    const weekN = Number((item ?? cell).closest('[data-week]')?.dataset.week);
+    keepOpen();
+    if (item) {
+      const id = item.dataset.pick;
+      if (picked === id) { state.pick = null; render(); return void focusItem(id); }
+      if (picked && weekOf(picked)?.n === weekN) return dropWorkout(picked, item.closest('[data-day]').dataset.day);
+      state.pick = id;
+      state.editMsg = null;
+      render();
+      return void focusItem(id);
+    }
+    if (picked) {
+      if (weekOf(picked)?.n !== weekN) { state.editMsg = { id: `week-${weekOf(picked).n}`, kind: 'error', text: 'A session can only move within its own week.' }; state.pick = null; return render(); }
+      return dropWorkout(picked, cell.dataset.day);
+    }
+  });
 
   el.addEventListener('click', async (e) => {
     const b = e.target.closest('[data-act],[data-copy-workout],[data-copy-week],[data-go],[data-sg],[data-test],[data-edit],[data-edit-do],[data-scale-do],[data-ai-threshold]');

@@ -96,7 +96,28 @@ test('the report carries workout ids, the change log and the format, and a sampl
   const example = changeFormatText(plan, today);
   const p = parseChangeBlock(example);
   assert.equal(p.found, true);
-  assert.equal(p.changes.length, 7);
+  assert.equal(p.changes.length, 8);
   const items = previewChanges(plan, settings, p.changes, { today });
   assert.ok(items.every((i) => i.kind !== 'unknown'));
+});
+
+test('an AI can swap two sessions of a later week; an unknown partner or the current week is refused', async () => {
+  const { applyChange } = await import('../js/core/edits.js');
+  const plan = generatePlan(settingsFor({ distanceKm: 21.1, runs: 4, weeks: 12 }), hist(), { today: '2026-12-28' }).plan;
+  const today = addDays(plan.startDate, 2);
+  const week = plan.weeks.find((w) => w.n >= 3 && w.workouts.filter((x) => x.role === 'E').length >= 2);
+  const [a, b] = week.workouts.filter((x) => x.role === 'E'); // two easy runs: no hard session ends up next to another
+  const text = `Sure.\n\`\`\`plan-changes\n${JSON.stringify({ changes: [{ op: 'Swap', id: a.id, other: b.id, reason: 'recover' }, { op: 'swap', workout: a.id, with: 'w99-Mon' }, { op: 'swap', workout: a.id }] })}\n\`\`\``;
+  const p = parseChangeBlock(text);
+  assert.ok(p.found, p.error);
+  const items = previewChanges(plan, settingsFor({}), p.changes, { today });
+  assert.equal(items[0].status, 'ok', items[0].error);
+  assert.match(items[0].text, /swapped with/);
+  assert.equal(items[1].status, 'refused');
+  assert.match(items[1].error, /no workout/);
+  assert.equal(items[2].status, 'refused');
+  assert.match(items[2].error, /other workout/);
+  assert.match(changeFormatText(plan, today), /"op": "swap"/);
+  const cur = plan.weeks[0].workouts.filter((x) => x.role !== 'S' && x.role !== 'RACE' && x.date > today);
+  if (cur.length >= 2) assert.match(applyChange(plan, { op: 'swap', workout: cur[0].id, with: cur[1].id }, { today, source: 'ai' }).error, /next Monday/);
 });

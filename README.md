@@ -159,6 +159,14 @@ only get shorter. Past workouts, the race and workouts with a matched run cannot
 change" in the plan header reverses the last edit (up to ten steps back), and "Regenerate" says how many
 edits it will replace.
 
+**Changing the schedule of a week.** Every open week has a strip of its seven days. Drag a session onto
+another day to move it, or onto another session to swap the two (a run swaps with a run, strength with
+strength). On a phone or with the keyboard, press a session, then press the day or session to move it to;
+Escape cancels. Sessions can only move within their own week. Days in the past, the race day, locked weeks
+and sessions with a matched run are not drop targets. A swap or move follows the same checks as the Edit
+form, and a climbing session that lands on a flat day gets a warning (an AI change is refused). Swaps are
+saved and undone as one step. An AI can ask for one with `{ "op": "swap", "workout": "w6-Tue", "with": "w6-Thu" }`.
+
 ## Applying AI feedback
 
 The AI report ends with a format for changes: the AI is asked to finish its answer with a `plan-changes`
