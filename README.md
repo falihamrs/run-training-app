@@ -104,6 +104,8 @@ npm test
 - "Regenerate from next Monday" keeps each remaining week in the phase it already had and continues the session ladders; only the volume restarts from what you actually ran. A plan that is under way is never refused for a low baseline.
 - In back-to-back weeks the flat tempo becomes an easy run when its only free day follows the previous long run; the climbing session stays.
 - A threshold entry can be corrected by adding one with the same date. New entries still cannot start in the past.
+- A plan that is not a real training block (fewer than half the minimum weeks, or for a half marathon, marathon or trail race above 25 km-effort a weekly peak under 40% of what the race needs) carries a warning at the top. New plans like this are already refused; the warning shows after "Generate anyway" or a late "Regenerate". Weeks that still run more than 15% over target are flagged.
+- When saving settings fails (storage full, storage closed), the message shows on every tab, the save bar says "Not saved" and the edits stay on screen for another try.
 
 ## Typing in climbing (treadmill runs)
 

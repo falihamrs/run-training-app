@@ -259,7 +259,7 @@ export function mountSettings(root, { storage, settings, savedAt = null, today, 
     root.innerHTML = `
       ${storageProblem ? `<p class="notice error">${esc(storageProblem)}</p>` : ''}
       <nav class="tabs" role="tablist">${tabs}</nav>
-      ${state.notice?.kind === 'error' && state.tab !== 'backup' ? `<p class="notice error" role="alert">${esc(state.notice.text)}</p>` : ''}
+      ${state.saveError && dirty() ? `<p class="notice error" role="alert" id="save-error">${esc(state.saveError)}</p>` : ''}
       <div class="layout">
         <main class="panel" role="tabpanel">${PANELS[state.tab]()}</main>
         <aside class="side" id="messages" aria-live="polite"></aside>
@@ -281,8 +281,18 @@ export function mountSettings(root, { storage, settings, savedAt = null, today, 
     if (bar) {
       const d = dirty();
       const status = !storage ? 'Saving is not available in this browser.' : d ? 'Unsaved changes' : state.savedAt ? `Saved ${new Date(state.savedAt).toLocaleString()}` : 'Nothing saved yet';
-      bar.innerHTML = `<span>${esc(status)}${v.errors.length ? ` · <strong>${v.errors.length} error${v.errors.length === 1 ? '' : 's'}</strong> to fix` : ''}</span>
-        <button type="button" class="primary" data-action="save" ${storage && d && v.errors.length === 0 ? '' : 'disabled'}>Save settings</button>`;
+      const info = `${state.saveError && d ? '<strong class="err">Not saved</strong> · ' : ''}${esc(status)}${v.errors.length ? ` · <strong>${v.errors.length} error${v.errors.length === 1 ? '' : 's'}</strong> to fix` : ''}`;
+      // Update in place: leaving a field fires "change" on the mouse-down of a Save click, and replacing
+      // the button then would swallow that click.
+      let span = bar.querySelector('span[data-status]');
+      let btn = bar.querySelector('button[data-action="save"]');
+      if (!span || !btn) {
+        bar.innerHTML = '<span data-status></span> <button type="button" class="primary" data-action="save">Save settings</button>';
+        span = bar.querySelector('span[data-status]');
+        btn = bar.querySelector('button[data-action="save"]');
+      }
+      span.innerHTML = info;
+      btn.disabled = !(storage && d && v.errors.length === 0);
     }
     const derived = root.querySelector('#race-derived');
     if (derived) derived.innerHTML = raceDerivedHtml();
@@ -403,18 +413,36 @@ export function mountSettings(root, { storage, settings, savedAt = null, today, 
   async function save() {
     const v = validation();
     if (!storage || v.errors.length > 0) return;
+    const next = clone(v.normalized);
     try {
-      state.settings = clone(v.normalized);
-      state.savedAt = await storage.saveSettings(state.settings);
-      state.saved = JSON.stringify(state.settings);
+      state.savedAt = await storage.saveSettings(next);
+      // only a successful save becomes the saved state; after a failure the edits stay on screen, unsaved
+      state.settings = next;
+      state.saved = JSON.stringify(next);
+      state.saveError = null;
       state.notice = { kind: 'ok', text: 'Settings saved.' };
-      if (!state.persisted) {
-        state.persisted = await storage.requestPersistence();
-      }
     } catch (err) {
-      state.notice = { kind: 'error', text: `Could not save: ${err.message}` };
+      state.saveError = saveErrorText(err);
+      render();
+      return;
+    }
+    // asking the browser to keep the data is separate: if it fails, the settings were still saved
+    if (!state.persisted) {
+      try { state.persisted = await storage.requestPersistence(); } catch { /* the backup reminder covers it */ }
     }
     render();
+  }
+
+  function saveErrorText(err) {
+    const name = err?.name ?? err?.inner?.name ?? '';
+    const msg = String(err?.message ?? err ?? '');
+    if (/Quota/i.test(name) || /quota/i.test(msg)) {
+      return "Your settings were not saved: the browser's storage for this app is full. Free space in History, Housekeeping (delete old runs), then press Save again. Your changes are still on screen.";
+    }
+    if (/InvalidState|Database.*closed|DatabaseClosed/i.test(name + msg)) {
+      return 'Your settings were not saved: the browser closed the app\'s storage (this can happen in a private window or after clearing site data). Reload the page and save again; export a backup first if you can.';
+    }
+    return `Your settings were not saved (${msg || 'unknown error'}). Your changes are still on screen; press Save to try again.`;
   }
 
   async function exportFile() {

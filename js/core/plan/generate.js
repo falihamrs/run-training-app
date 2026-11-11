@@ -588,6 +588,41 @@ export function generatePlan(settingsIn, history, { today, id = 'main', now = nu
         : 'You have no more available days, so free up another day or consider an easier goal.';
     messages.push({ level: 'warn', code: 'runsTooFew', recommendedRuns: better?.runs ?? null, text: `${v.effectiveRunsPerWeek} runs a week is not enough to reach this goal: ${gaps}. ${fix}` });
   }
+  // Weeks that still run well over their target: the shortest useful sessions do not fit a week this small.
+  for (const w of weeks) {
+    if (w.n === nWeeks || w.kind === 'hold') continue;
+    const over = trail ? w.plannedMin - w.targetHours * 60 : (w.plannedKm ?? 0) - (w.targetKm ?? 0);
+    const target = trail ? w.targetHours * 60 : w.targetKm ?? 0;
+    if (target > 0 && over > 0.15 * target && over > (trail ? 15 : 2)) {
+      w.flags.push(`This week is ${trail ? `${Math.round(over)} min` : `${Math.round(over * 10) / 10} km`} over its target because the shortest useful sessions do not fit a week this small. Run the easy parts shorter if it feels like too much.`);
+    }
+  }
+
+  // Not a real training block: far too few weeks, or a peak that stays far below what the race needs.
+  {
+    const minBlock = trail ? params.cls.block : params.table.block;
+    const trainWeeks = nWeeks - (params.earlyRace ? 1 : 0);
+    const peakReached = Math.max(0, ...weeks.filter((w) => w.kind !== 'taper').map((w) => (trail ? w.targetHours : w.targetKm ?? 0)));
+    const peakNeeded = trail ? params.peakHours : params.peakKm;
+    const share = peakNeeded > 0 ? peakReached / peakNeeded : 1;
+    const label = trail ? `a ${settings.race.distanceKm} km trail race with ${settings.race.elevationGainM} m climbing` : `a ${params.table.label}`;
+    // a 5 km or 10 km can be finished from a small base, so only longer races are judged by volume
+    const longRace = trail ? params.effort > 25 : params.cat === 'half' || params.cat === 'marathon';
+    const lowPeak = longRace && share < 0.4;
+    if (trainWeeks < minBlock / 2 || lowPeak) {
+      const why = [
+        trainWeeks < minBlock / 2 ? `only ${trainWeeks} week${trainWeeks === 1 ? '' : 's'} until the race, where ${minBlock} is the minimum` : null,
+        lowPeak ? `the weekly volume peaks at ${Math.round(100 * share)}% of what ${label} needs` : null,
+      ].filter(Boolean).join(', and ');
+      // a predicted race time assumes the training was done, so say so
+      for (const m of messages) if (m.code === 'predicted') m.text = `${m.text.replace(/\.$/, '')}, but only if you were trained for the distance.`;
+      messages.unshift({
+        level: 'warn', code: 'notABlock',
+        text: `This is not a real training block: ${why}. The plan can keep you running safely up to race day, but it cannot prepare you for this race. A later race or a shorter one would suit your current training better. If you do start, run it as an easy effort and be ready to stop.`,
+      });
+    }
+  }
+
   const finalStatus = messages.some((m) => m.level === 'warn') ? 'WARN' : 'OK';
 
   const plan = {

@@ -51,7 +51,7 @@ test('every generated plan satisfies the structural invariants', () => {
       }
       const long = w.workouts.find((x) => x.role === 'L');
       if (long) for (const x of runW) if (x.role === 'E' || x.role === 'R') assert.ok(x.plannedMin <= long.plannedMin + 10, `${c.label} W${w.n}: easy run longer than the long run`);
-      const okFlag = w.flags.some((f) => /left out|became the shakeout|run was dropped/.test(f));
+      const okFlag = w.flags.some((f) => /left out|became the shakeout|run was dropped|over its target/.test(f));
       if (w.n < p.weeks.length && w.phase !== 'taper' && !okFlag) {
         if (p.mode === 'trail') assert.ok(w.plannedMin <= w.targetHours * 60 * 1.15 + 5 && w.plannedMin >= w.targetHours * 60 * 0.8, `${c.label} W${w.n}: ${w.plannedMin} min vs ${w.targetHours} h`);
         else assert.ok(w.plannedKm >= w.targetKm * 0.8, `${c.label} W${w.n}: ${w.plannedKm} vs ${w.targetKm} km`);

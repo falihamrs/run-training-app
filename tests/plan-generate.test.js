@@ -321,3 +321,26 @@ test('below the starting point: enough weeks build the base first, too few weeks
   assert.ok(!fit.messages.some((m) => m.code === 'entry' || m.code === 'entryBase'));
   assert.equal(fit.plan.entryLeadWeeks, null);
 });
+
+test('a plan that is not a real training block says so, and normal plans do not', () => {
+  const low = hist({ baselineWeeklyKm: 10, baselineWeeklyHours: 1.1, longestRunKm: 6, longestRunMin: 45, baselineWeeklyVertM: 30 });
+  const s = settingsFor({ distanceKm: 42.195, runs: 3, weeks: 6 });
+  s.race.date = addDays(s.race.date, -5);
+  assert.equal(generatePlan(s, low, { today: TODAY }).status, 'BLOCK');
+  const r = generatePlan(s, low, { today: TODAY, allowShort: true, overrideEntry: true });
+  assert.equal(r.messages[0].code, 'notABlock');
+  assert.match(r.messages[0].text, /only 5 weeks until the race, where 12 is the minimum, and the weekly volume peaks at \d+% of what a marathon needs/);
+  assert.match(r.messages.find((m) => m.code === 'predicted').text, /only if you were trained/);
+  // the overshooting week is flagged instead of silently over target
+  assert.ok(r.plan.weeks.some((w) => w.flags.some((f) => /over its target/.test(f))));
+  // a 5 km from a small base, a plan with enough weeks, and your own plan get no such warning
+  const ok = [
+    generatePlan(settingsFor({ distanceKm: 5, runs: 3, weeks: 8 }), low, { today: TODAY }),
+    generatePlan(settingsFor({ distanceKm: 21.1, runs: 4, weeks: 16 }), hist(), { today: TODAY }),
+    generatePlan(settingsFor({ ...trailOpts, distanceKm: 25, gain: 2300, runs: 4, weeks: 32 }), hist({ baselineWeeklyHours: 1.9, longestRunMin: 80, baselineWeeklyVertM: 60 }), { today: TODAY }),
+  ];
+  for (const x of ok) {
+    assert.ok(x.plan);
+    assert.ok(!x.messages.some((m) => m.code === 'notABlock'), x.messages.map((m) => m.text).join(' '));
+  }
+});
