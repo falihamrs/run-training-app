@@ -53,6 +53,8 @@ function checkPlan(p, s, label, area) {
       if (!x.edited && unavailable.includes(x.weekday)) bad(area, label, `${x.id} on unavailable day`);
       if (W.totalMinutes(x.steps) !== x.plannedMin) bad(area, label, `${x.id} steps ${W.totalMinutes(x.steps)} != ${x.plannedMin}`);
       if (x.plannedMin < 15) bad(area, label, `${x.id} ${x.plannedMin} min`);
+      if (x.plannedVertM > (400 * x.plannedMin) / 60 + 0.5) bad(area, label, `${x.id} ${x.plannedVertM} m in ${x.plannedMin} min`);
+      if (x.plannedVertM && s.race.mode === 'trail' && !x.edited && !['hills', 'incline'].includes(s.schedule.dayTerrain[x.weekday]) && x.role !== 'L') bad(area, label, `${x.id} ${x.code}/${x.role} ${x.plannedVertM} m climbs on a flat day (${w.phase}, locked ${!!w.locked})`);
       if (!Number.isFinite(x.plannedMin)) bad(area, label, `${x.id} minutes ${x.plannedMin}`);
     }
   }

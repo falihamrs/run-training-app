@@ -352,19 +352,31 @@ export function generatePlan(settingsIn, history, { today, id = 'main', now = nu
       const recipients = [];
       if (longDay) recipients.push({ day: longDay, share: 0.5, mins: longMin });
       if (climbQDay) recipients.push({ day: climbQDay, share: 0.25, mins: q2Min });
-      const next = medDay ?? hillsRun;
-      if (next) recipients.push({ day: next, share: 0.25, mins: medDay ? medMin : round5(sizes[next] ?? floorMin) });
+      const medClimbs = medDay && (terrain[medDay] === 'hills' || terrain[medDay] === 'incline');
+      const next = medClimbs ? medDay : hillsRun;
+      if (next) recipients.push({ day: next, share: 0.25, mins: next === medDay ? medMin : round5(sizes[next] ?? floorMin) });
+      const capOf = (mins) => Math.round((400 * mins) / 60);
       let placed = 0;
       for (const r of recipients) {
-        const want = vert * r.share;
-        const capM = Math.round((400 * r.mins) / 60);
-        const got = Math.min(want, capM);
+        const got = Math.min(vert * r.share, capOf(r.mins));
         alloc[r.day] = Math.floor(got / 10) * 10;
         placed += alloc[r.day];
       }
+      // What a missing or full slot could not take goes to runs that still have room under 400 m/h:
+      // easy runs on hills or incline days first, so the long run does not carry it all, then the long run
+      // (not in the taper, where the long run should get easier).
+      const climbable = Object.keys(assign).filter((d) => (terrain[d] === 'hills' || terrain[d] === 'incline')
+        && (d === longDay || d === medDay || d === climbQDay || assign[d] === 'E' || assign[d] === 'R'));
+      const minsOf = (d) => (d === longDay ? longMin : d === medDay ? medMin : d === climbQDay ? q2Min : round5(sizes[d] ?? floorMin));
+      const order = [...climbable.filter((d) => d !== longDay), ...climbable.filter((d) => d === longDay && vw.phase !== 'taper')];
+      for (const d of order) {
+        const add = Math.floor(Math.min(vert - placed, capOf(minsOf(d)) - (alloc[d] ?? 0)) / 10) * 10;
+        if (add > 0) { alloc[d] = (alloc[d] ?? 0) + add; placed += add; }
+      }
       const lost = Math.round(vert - placed);
       if (vert > 0 && !raceLike && vw.phase !== 'taper' && lost > Math.max(50, 0.05 * vert)) {
-        flags.push(`${lost} m of the weekly climbing could not be placed on the available days.`);
+        const days = climbable.length ? climbable.join(', ') : 'none';
+        flags.push(`${lost} m of the weekly climbing could not be placed: the runs that can climb (${days}) are full at 400 m per hour. Set another run day to hills or incline to place it.`);
       }
     }
 
@@ -405,7 +417,7 @@ export function generatePlan(settingsIn, history, { today, id = 'main', now = nu
         const rec = role === 'R';
         const hill = terrain[d] === 'hills';
         const climbM = alloc[d] ?? 0;
-        mk(d, rec ? 'RC' : 'EZ', role, W.easySteps(min, { zone: rec ? 'Z1' : 'Z2', flat: !(trail && hill && climbM), climbM }), { vertM: climbM });
+        mk(d, rec ? 'RC' : 'EZ', role, W.easySteps(min, { zone: rec ? 'Z1' : 'Z2', flat: !(trail && (hill || terrain[d] === 'incline') && climbM), climbM }), { vertM: climbM });
       }
     }
     // strides on up to two flat easy runs
@@ -499,11 +511,18 @@ export function generatePlan(settingsIn, history, { today, id = 'main', now = nu
     if (!clash || clash.role === 'L') continue;
     const hardDates = cur.workouts.filter((w) => ['Q1', 'Q2', 'L', 'M'].includes(w.role) && w !== clash).map((w) => w.date);
     if (i === weeks.length - 1) hardDates.push(raceDate);
-    const swap = cur.workouts.find((w) => (w.role === 'E' || w.role === 'R') && w.date !== addDays(raceDate, -1) && hardDates.every((d) => Math.abs(diffDays(d, w.date)) >= 2));
+    // an easy run that climbs keeps its day if another one can swap, as the hard session's day may be flat
+    const climbsOn = (t) => t === 'hills' || t === 'incline';
+    const swaps = cur.workouts.filter((w) => (w.role === 'E' || w.role === 'R') && w.date !== addDays(raceDate, -1) && hardDates.every((d) => Math.abs(diffDays(d, w.date)) >= 2));
+    const swap = swaps.find((w) => !w.plannedVertM || climbsOn(clash.terrain)) ?? swaps[0];
     if (swap) {
       const keep = { date: swap.date, weekday: swap.weekday, id: swap.id, terrain: swap.terrain };
       Object.assign(swap, { date: clash.date, weekday: clash.weekday, id: clash.id, terrain: clash.terrain });
       Object.assign(clash, keep);
+      if (swap.plannedVertM && !climbsOn(swap.terrain)) {
+        swap.steps = swap.steps.map((st) => (st.kind === 'easy' ? { ...st, flat: true, climbM: 0 } : st));
+        swap.plannedVertM = 0;
+      }
       cur.workouts.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.role === 'S' ? 1 : -1));
     } else {
       const steps = W.easySteps(round5(Math.min(clash.plannedMin, 40)), { zone: 'Z2' });
@@ -571,8 +590,25 @@ export function generatePlan(settingsIn, history, { today, id = 'main', now = nu
 
   const coverage = coverageOf(weeks, trail);
   const climbDays = available.filter((d) => terrain[d] === 'hills' || terrain[d] === 'incline');
+  // The first flat day that, set to hills, lets the plan place enough climbing; days with easy runs first.
+  let fixMemo;
+  const climbDayFix = (have) => {
+    if (fixMemo !== undefined) return fixMemo;
+    fixMemo = null;
+    const easyOn = (d) => weeks.reduce((n, w) => n + w.workouts.filter((x) => x.weekday === d && (x.role === 'E' || x.role === 'R')).length, 0);
+    for (const d of available.filter((x) => !have.includes(x)).sort((a, b) => easyOn(b) - easyOn(a))) {
+      const dayTerrain = { ...(settingsIn.schedule?.dayTerrain ?? terrain), [d]: 'hills' };
+      const trial = generatePlan({ ...settingsIn, schedule: { ...settingsIn.schedule, dayTerrain } }, history, { today, id, now, allowShort, overrideEntry, noRunAdvice: true, resume });
+      const c = trial.plan ? coverageOf(trial.plan.weeks, true) : null;
+      if (c && c.worst >= COVERAGE_MIN) { fixMemo = { day: d, coverage: c }; break; }
+    }
+    return fixMemo;
+  };
   if (!noRunAdvice && trail && coverage.worst < COVERAGE_MIN && climbDays.length === 0) {
     messages.push({ level: 'warn', code: 'noClimbDays', recommendedRuns: null, text: `None of your available days is set to hills or incline, so only ${Math.round(coverage.worst * 100)}% of the climbing target can be placed. More runs will not fix this. Set at least one weekday to incline or hills in Settings, Schedule.` });
+  } else if (!noRunAdvice && trail && coverage.gaps.length && coverage.gaps.every((g) => g.label === 'climbing') && climbDayFix(climbDays)) {
+    const { day, coverage: c } = climbDayFix(climbDays);
+    messages.push({ level: 'warn', code: 'climbDaysTooFew', recommendedRuns: null, recommendedDay: day, text: `Only ${climbDays.join(' and ')} ${climbDays.length === 1 ? 'is' : 'are'} set to hills or incline, so ${Math.round(coverage.worst * 100)}% of the climbing target can be placed. Set ${day} to hills in Settings, Schedule to reach ${Math.round(c.worst * 100)}%. More runs on flat days will not help.` });
   } else if (!noRunAdvice && coverage.worst < COVERAGE_MIN) {
     const maxRuns = Math.min(7, available.length);
     let better = null;

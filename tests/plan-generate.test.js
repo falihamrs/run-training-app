@@ -355,3 +355,42 @@ test('a small road plan never has a run shorter than 15 minutes, even in recover
     for (const w of r.plan.weeks) for (const x of runs(w)) assert.ok(x.plannedMin >= 15, `base ${baselineWeeklyKm} km: ${x.id} ${x.code} ${x.plannedMin} min`);
   }
 });
+
+const amar = (terrain, experience = 'intermediate') => {
+  const s = settingsFor({ mode: 'trail', distanceKm: 25, gain: 2300, runs: 4, terrain, experience });
+  s.schedule.startDate = '2026-11-16';
+  s.race.date = '2027-06-26';
+  return generatePlan(s, hist(), { today: '2026-11-11' });
+};
+const vertOf = (w) => w.workouts.reduce((a, x) => a + (x.plannedVertM || 0), 0);
+
+test('climbing a missing slot cannot take moves to runs that still have room', () => {
+  // two hills days and two incline days: every week, taper included, gets its whole climbing target
+  const r = amar(TERRAIN);
+  for (const w of r.plan.weeks.slice(0, -1)) assert.ok(vertOf(w) >= w.targetVertM - 10, `W${w.n} ${w.phase}: ${vertOf(w)} of ${w.targetVertM} m`);
+  // only Sunday climbs: the long run takes what fits under 400 m/h, not just its 50% share
+  const one = amar({ ...TERRAIN, Mon: 'flat', Wed: 'flat', Sat: 'flat' });
+  for (const w of one.plan.weeks.filter((x) => x.phase !== 'taper')) {
+    const long = w.workouts.find((x) => x.role === 'L');
+    assert.ok(vertOf(w) >= Math.min(w.targetVertM, Math.floor((400 * long.plannedMin) / 60 / 10) * 10) - 10, `W${w.n}: ${vertOf(w)} m`);
+    for (const x of w.workouts) if (x.plannedVertM) assert.equal(x.weekday, 'Sun', `${x.id} climbs on a flat day`);
+  }
+});
+
+test('too few climbing days: the advice is to set a day to hills, not to add runs', () => {
+  const r = amar({ ...TERRAIN, Mon: 'flat', Wed: 'flat', Sat: 'flat' }, 'experienced');
+  const m = r.messages.find((x) => x.code === 'climbDaysTooFew');
+  assert.ok(m, r.messages.map((x) => x.code).join(', '));
+  assert.ok(!r.messages.some((x) => x.code === 'runsTooFew'));
+  assert.match(m.text, /Only Sun is set to hills or incline/);
+  const fixed = amar({ ...TERRAIN, Mon: 'flat', Wed: 'flat', Sat: 'flat', [m.recommendedDay]: 'hills' }, 'experienced');
+  assert.ok(!fixed.messages.some((x) => x.code === 'climbDaysTooFew' || x.code === 'runsTooFew'), fixed.messages.map((x) => x.text).join(' '));
+});
+
+test('in the taper the long run keeps its climbing share and gets no extra', () => {
+  const one = amar({ ...TERRAIN, Mon: 'flat', Wed: 'flat', Sat: 'flat' });
+  for (const w of one.plan.weeks.filter((x) => x.phase === 'taper' && x.targetVertM)) {
+    const long = w.workouts.find((x) => x.role === 'L');
+    assert.ok(long.plannedVertM <= Math.ceil(w.targetVertM / 2 / 10) * 10, `W${w.n}: long run ${long.plannedVertM} m of ${w.targetVertM}`);
+  }
+});
