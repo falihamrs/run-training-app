@@ -3,7 +3,10 @@ import { haversine } from './geo.js';
 import { elevationProfile } from './elevation.js';
 import { localDateOfMs } from './dates.js';
 
-export const SLOWEST_MOVING_SEC_PER_KM = 900; // slower than 15:00/km counts as stopped
+// Slower than 33:20/km (0.5 m/s), judged over about 10 seconds, counts as stopped. Steep power-hiking
+// and walking recoveries stay moving; standing at a crossing does not.
+export const SLOWEST_MOVING_SEC_PER_KM = 2000;
+const STOP_WINDOW_SEC = 5; // seconds either side
 const MAX_GAP_SEC = 10; // longer gaps in the file are pauses
 const MIN_DIST_M = 1000;
 
@@ -42,6 +45,22 @@ export function buildTimeline(rawPoints, { indoor = false } = {}) {
   const hr = [];
   let moved = 0;
   let elapsed = 0;
+  // speed over a short window around each sample: watches write distance in whole metres every second,
+  // so one second on its own (1 m = 16:40/km) says little about whether you stopped
+  let lo = 0, hi = 0;
+  const windowPace = (i) => {
+    const t = pts[i].t;
+    while (pts[lo].t < t - STOP_WINDOW_SEC * 1000) lo++;
+    while (hi < pts.length - 1 && pts[hi + 1].t <= t + STOP_WINDOW_SEC * 1000) hi++;
+    // never let the window reach across a pause in the recording
+    let a = lo, b = hi;
+    for (let k = i; k > a; k--) if (pts[k].t - pts[k - 1].t > MAX_GAP_SEC * 1000) { a = k; break; }
+    for (let k = i; k < b; k++) if (pts[k + 1].t - pts[k].t > MAX_GAP_SEC * 1000) { b = k; break; }
+    const dt = (pts[b].t - pts[a].t) / 1000;
+    const dd = pts[b].dist - pts[a].dist;
+    return dt > 0 && dd > 0 ? (dt / dd) * 1000 : Infinity;
+  };
+  let carry = 0; // distance covered while stopped, added to the next moving second so the total stays right
   for (let i = 1; i < pts.length; i++) {
     const a = pts[i - 1];
     const b = pts[i];
@@ -49,15 +68,17 @@ export function buildTimeline(rawPoints, { indoor = false } = {}) {
     if (dt <= 0) continue;
     elapsed += dt;
     const dd = b.dist - a.dist;
-    if (dt > MAX_GAP_SEC || dd < 0) continue;
-    const pace = dd > 0 ? (dt / dd) * 1000 : Infinity;
-    // indoors the distance comes from a wrist or foot sensor that updates in steps, so a second with no
-    // distance is a sensor step, not a stop; only gaps in the recording are pauses there
-    if (!indoor && pace > SLOWEST_MOVING_SEC_PER_KM) continue;
+    if (dd < 0) continue;
+    if (dt > MAX_GAP_SEC) { carry += dd; continue; } // a pause: keep the distance, not the time
+    // indoors the distance comes from a wrist or foot sensor that updates in steps, so a still second is a
+    // sensor step, not a stop; only gaps in the recording are pauses there
+    if (!indoor && windowPace(i) > SLOWEST_MOVING_SEC_PER_KM) { carry += dd; continue; }
     const steps = Math.max(1, Math.round(dt));
+    const step = (dd + carry) / steps;
+    carry = 0;
     for (let s = 1; s <= steps; s++) {
       const f = s / steps;
-      moved += dd / steps;
+      moved += step;
       d.push(moved);
       alt.push(prof.smoothed[i - 1] == null ? null : prof.smoothed[i - 1] + (prof.smoothed[i] - prof.smoothed[i - 1]) * f);
       gain.push(prof.gain[i - 1] + (prof.gain[i] - prof.gain[i - 1]) * f);
@@ -66,6 +87,7 @@ export function buildTimeline(rawPoints, { indoor = false } = {}) {
       hr.push(h != null && h >= 40 && h <= 220 ? h : null);
     }
   }
+  if (carry > 0 && d.length) d[d.length - 1] = moved += carry; // distance after the last moving second
   return { d, alt, gain, loss, hr, elapsedSec: elapsed, totalGain: prof.gain.at(-1) ?? 0, totalLoss: prof.loss.at(-1) ?? 0 };
 }
 

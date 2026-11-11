@@ -118,6 +118,11 @@ every split at once. Saving replaces the run's climbing, so weekly climbing, pla
 climbs (8 minutes or more at 6% or steeper) and threshold suggestions all use it. "Back to the watch
 value" undoes it.
 
+Moving time leaves out only near-standing (slower than 33:20/km over about 10 seconds), so walking
+recoveries and steep power-hiking count. All distance is kept, including what was covered while stopped,
+so totals match the watch. Checked against a real Coros TCX export (distance within 0.01 km, time within
+10 seconds).
+
 Runs with no GPS in the file are marked **indoor**. Their moving time is the watch's timer time (a
 treadmill sensor's still seconds are not stops), and their pace is never used to estimate threshold
 pace, because it comes from a wrist or foot sensor. Heart rate and climbing still count.

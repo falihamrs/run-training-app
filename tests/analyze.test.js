@@ -47,10 +47,24 @@ test('pauses are excluded from moving time but kept in elapsed', () => {
   assert.ok(r.run.elapsedSec >= 1490);
 });
 
-test('slow walking segments (> 15:00/km) do not count as moving', () => {
-  const pts = makePoints([...flat(10), { sec: 300, pace: 1200, hr: 100 }, ...flat(10)]);
-  const r = analyzeActivity(parseTcx(toTcx(pts))[0]);
-  near(r.run.movingSec, 1200, 15);
+test('steep hiking and walking (20:00/km) count as moving; near standing (40:00/km) does not', () => {
+  const hike = analyzeActivity(parseTcx(toTcx(makePoints([...flat(10), { sec: 300, pace: 1200, hr: 120 }, ...flat(10)])))[0]);
+  near(hike.run.movingSec, 1500, 15);
+  const still = analyzeActivity(parseTcx(toTcx(makePoints([...flat(10), { sec: 300, pace: 2400, hr: 100 }, ...flat(10)])))[0]);
+  near(still.run.movingSec, 1200, 15);
+  // the distance covered while nearly standing is still part of the total
+  near(still.run.distanceKm, hike.run.distanceKm - 0.25 + 0.125, 0.02);
+});
+
+test('whole-metre distance steps (as Coros writes them) do not make slow seconds look stopped', () => {
+  // 1:30 walking recoveries at 1 m/s between 2-minute efforts, distance rounded down to whole metres
+  const segs = [];
+  for (let k = 0; k < 6; k++) segs.push({ sec: 120, pace: 330, hr: 160 }, { sec: 90, pace: 1000, hr: 130 });
+  const pts = makePoints(segs);
+  const whole = pts.map((p) => ({ ...p, dist: Math.floor(p.dist) }));
+  const r = analyzeActivity(parseTcx(toTcx(whole))[0]);
+  near(r.run.movingSec, 6 * 210, 10);
+  near(r.run.distanceKm * 1000, whole.at(-1).dist - whole[0].dist, 2);
 });
 
 test('implausible heart rate values are dropped', () => {
