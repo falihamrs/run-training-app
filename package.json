@@ -6,6 +6,7 @@
   "description": "Browser-only run and trail training plan generator",
   "scripts": {
     "test": "node --test",
+    "fuzz": "node tests/fuzz/fuzz.mjs",
     "serve": "python3 -m http.server 8080"
   }
 }

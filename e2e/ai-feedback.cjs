@@ -1,9 +1,9 @@
 // Optional browser check (not part of npm test): needs Playwright, the app on http://localhost:8080 and an
-// unzipped Coros TCX export in /tmp/coros/export/x. Builds the trail plan, copies the report, writes an AI-style
+// sample Coros export in e2e/fixtures (or TCX_DIR). Builds the trail plan, copies the report, writes an AI-style
 // answer with a plan-changes block, uploads it as .md, applies it, checks Settings and undo.
 const { chromium } = require('playwright');
+const fx = require('./fixtures.cjs');
 const fs = require('fs');
-const DIR = process.env.TCX_DIR || '/tmp/coros/export/x/';
 (async () => {
   const browser = await chromium.launch();
   const ctx = await browser.newContext({ viewport: { width: 1100, height: 1000 }, timezoneId: 'Asia/Bangkok' });
@@ -22,7 +22,7 @@ const DIR = process.env.TCX_DIR || '/tmp/coros/export/x/';
   await page.click('[data-tab="thresholds"]'); await page.fill('[data-draft="lthr"]', '171'); await page.fill('[data-draft="pace"]', '6:26');
   await page.click('[data-action="add-threshold"]'); await page.click('[data-action="save"]'); await page.waitForTimeout(300);
   await page.click('[data-page="history"]');
-  await page.setInputFiles('#hist-files', fs.readdirSync(DIR).map((f) => DIR + f));
+  await page.setInputFiles('#hist-files', fx.all());
   await page.waitForFunction(() => document.querySelectorAll('.results li').length >= 11, null, { timeout: 60000 }); await page.waitForTimeout(500);
   await page.click('[data-page="plan"]'); await page.click('[data-act="generate"]'); await page.waitForTimeout(1500);
   // the report names the workouts by id

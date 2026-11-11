@@ -1,5 +1,6 @@
-// Optional browser check (not part of npm test): needs Playwright, the app on http://localhost:8080 and sample .tcx files in /tmp/coros/tcx.
+// Optional browser check (not part of npm test): needs Playwright, the app on http://localhost:8080 and the sample runs in e2e/fixtures.
 const { chromium } = require('playwright');
+const fx = require('./fixtures.cjs');
 (async () => {
   const browser = await chromium.launch();
   const ctx = await browser.newContext({ viewport: { width: 1000, height: 1000 }, timezoneId: 'Asia/Bangkok' });
@@ -8,7 +9,7 @@ const { chromium } = require('playwright');
   page.on('console', (m) => { if (m.type() === 'error') console.log('console', m.text()); });
   await page.goto('http://localhost:8080/index.html#history');
   await page.waitForSelector('#hist-files');
-  await page.setInputFiles('#hist-files', ['/tmp/coros/tcx/2026-11-04.tcx', '/tmp/coros/tcx/2026-11-08.tcx']);
+  await page.setInputFiles('#hist-files', [fx.tcx('2026-11-04'), fx.tcx('2026-11-08')]);
   await page.waitForSelector('.results li'); await page.waitForTimeout(600);
   const txt = async () => (await page.textContent('#page-history')).replace(/\s+/g, ' ');
   const row = async () => (await page.locator('table.list tbody tr').first().textContent()).replace(/\s+/g, ' ');

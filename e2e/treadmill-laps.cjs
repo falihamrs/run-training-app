@@ -1,5 +1,6 @@
 // Optional browser check (not part of npm test): needs Playwright, the app on http://localhost:8080 and a treadmill TCX with laps.
 const { chromium } = require('playwright');
+const fx = require('./fixtures.cjs');
 (async () => {
   const browser = await chromium.launch();
   const ctx = await browser.newContext({ viewport: { width: 1000, height: 1000 }, timezoneId: 'Asia/Jakarta' });
@@ -9,7 +10,7 @@ const { chromium } = require('playwright');
   await page.addInitScript(() => window.addEventListener('unhandledrejection', (e) => console.error('UNHANDLED', e.reason?.message, e.reason?.stack)));
   await page.goto('http://localhost:8080/index.html#history');
   await page.waitForSelector('#hist-files');
-  await page.setInputFiles('#hist-files', ['/tmp/coros/tm/2026-11-10.tcx']);
+  await page.setInputFiles('#hist-files', [fx.tm('2026-11-10')]);
   await page.waitForSelector('.results li'); await page.waitForTimeout(600);
   const row = async () => (await page.locator('tr:has([data-climb])').first().textContent()).replace(/\s+/g, ' ').trim();
   console.log('row    :', await row());

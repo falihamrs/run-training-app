@@ -1,5 +1,6 @@
-// Optional browser check (not part of npm test): needs Playwright, the app on http://localhost:8080 and an unzipped Coros TCX export in /tmp/coros/export/x.
+// Optional browser check (not part of npm test): needs Playwright, the app on http://localhost:8080 and the sample Coros export in e2e/fixtures.
 const { chromium } = require('playwright');
+const fx = require('./fixtures.cjs');
 const fs = require('fs');
 (async () => {
   const browser = await chromium.launch();
@@ -9,8 +10,7 @@ const fs = require('fs');
   await page.clock.install({ time: new Date('2026-11-11T08:00:00+07:00') });
   await page.goto('http://localhost:8080/index.html#history');
   await page.waitForSelector('#hist-files');
-  const dir = '/tmp/coros/export/x/';
-  await page.setInputFiles('#hist-files', fs.readdirSync(dir).map((f) => dir + f));
+  await page.setInputFiles('#hist-files', fx.all());
   await page.waitForFunction(() => document.querySelectorAll('.results li').length >= 11, null, { timeout: 60000 });
   await page.waitForTimeout(800);
   const res = await page.locator('.results li').allTextContents();

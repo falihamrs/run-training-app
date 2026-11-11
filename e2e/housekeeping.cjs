@@ -1,5 +1,6 @@
-// Optional browser check (not part of npm test): needs Playwright, the app on http://localhost:8080 and sample .tcx files in /tmp/coros/tcx.
+// Optional browser check (not part of npm test): needs Playwright, the app on http://localhost:8080 and the sample runs in e2e/fixtures.
 const { chromium } = require('playwright');
+const fx = require('./fixtures.cjs');
 const fs = require('fs');
 (async () => {
   const browser = await chromium.launch();
@@ -9,8 +10,7 @@ const fs = require('fs');
   page.on('console', (m) => { if (m.type() === 'error') console.log('console', m.text()); });
   await page.goto('http://localhost:8080/index.html#history');
   await page.waitForSelector('#hist-files');
-  const dir = '/tmp/coros/tcx/';
-  await page.setInputFiles('#hist-files', fs.readdirSync(dir).map((f) => dir + f));
+  await page.setInputFiles('#hist-files', fx.outdoor());
   await page.waitForSelector('.results li');
   await page.waitForTimeout(600);
   const txt = async () => (await page.textContent('#page-history')).replace(/\s+/g, ' ');

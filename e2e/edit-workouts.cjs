@@ -1,8 +1,8 @@
 // Optional browser check (not part of npm test): needs Playwright and the app on http://localhost:8080.
 // Builds a plan, edits workouts by hand (length, move, easy, rest, adjust week), undoes, and reloads.
 const { chromium } = require('playwright');
+const fx = require('./fixtures.cjs');
 const fs = require('fs');
-const DIR = process.env.TCX_DIR || '/tmp/coros/export/x/';
 (async () => {
   const browser = await chromium.launch();
   const page = await (await browser.newContext({ viewport: { width: 1100, height: 1000 }, timezoneId: 'Asia/Bangkok' })).newPage();
@@ -17,7 +17,7 @@ const DIR = process.env.TCX_DIR || '/tmp/coros/export/x/';
   await page.click('[data-tab="thresholds"]'); await page.fill('[data-draft="lthr"]', '171'); await page.fill('[data-draft="pace"]', '6:26');
   await page.click('[data-action="add-threshold"]'); await page.click('[data-action="save"]'); await page.waitForTimeout(300);
   await page.click('[data-page="history"]');
-  await page.setInputFiles('#hist-files', fs.readdirSync(DIR).map((f) => DIR + f));
+  await page.setInputFiles('#hist-files', fx.all());
   await page.waitForFunction(() => document.querySelectorAll('.results li').length >= 11, null, { timeout: 60000 }); await page.waitForTimeout(500);
   await page.click('[data-page="plan"]'); await page.click('[data-act="generate"]'); await page.waitForTimeout(1200);
   if (await page.locator('[data-act="generate-override"]').count()) { await page.click('[data-act="generate-override"]'); await page.waitForTimeout(1200); }

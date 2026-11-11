@@ -2,6 +2,7 @@
 // Matches a run, starts a new plan, and prints the run's match before and after; "after" must be empty.
 // Run: NODE_PATH=$(npm root -g) node e2e/new-plan.cjs  (needs sample .tcx files at the paths used below)
 const { chromium } = require('playwright');
+const fx = require('./fixtures.cjs');
 const fs = require('fs');
 (async () => {
   const browser = await chromium.launch();
@@ -19,7 +20,7 @@ const fs = require('fs');
   await page.click('[data-action="add-threshold"]');
   await page.click('[data-action="save"]');
   await page.click('[data-page="history"]');
-  await page.setInputFiles('#hist-files', ['/tmp/coros/tcx/2026-11-01.tcx']);
+  await page.setInputFiles('#hist-files', [fx.tcx('2026-11-01')]);
   await page.waitForSelector('.results li');
   await page.click('[data-page="plan"]');
   await page.click('[data-act="generate"]');

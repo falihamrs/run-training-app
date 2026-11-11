@@ -11,6 +11,7 @@ const round05 = (x) => Math.round(x * 2) / 2;
 const hasClimbSteps = (code) => ['CLB', 'HIL', 'HIKE', 'DWN', 'INC'].includes(code);
 
 const COVERAGE_MIN = 0.85;
+const LONG_FLOOR_MIN = 20; // same as the shortest easy run
 
 // How much of each weekly target the placed workouts actually reach, over build and peak load weeks.
 function coverageOf(weeks, trail) {
@@ -170,6 +171,8 @@ export function generatePlan(settingsIn, history, { today, id = 'main', now = nu
       }
     }
     let longMin = longSize == null ? 0 : trail ? longSize : Math.round((longSize * easyPace) / 60);
+    // a road recovery week shrinks the long run to 80%; it never drops below the shortest easy run
+    if (!trail && longMin > 0 && longMin < LONG_FLOOR_MIN) longMin = LONG_FLOOR_MIN;
 
     // quality sessions
     const quality = {};

@@ -1,5 +1,6 @@
 // Optional browser check (not part of npm test): needs Playwright, the app on http://localhost:8080 and sample .tcx files.
 const { chromium } = require('playwright');
+const fx = require('./fixtures.cjs');
 const fs = require('fs');
 (async () => {
   const browser = await chromium.launch();
@@ -17,7 +18,7 @@ const fs = require('fs');
   await page.click('[data-tab="thresholds"]'); await page.fill('[data-draft="lthr"]', '171'); await page.fill('[data-draft="pace"]', '6:26');
   await page.click('[data-action="add-threshold"]'); await page.click('[data-action="save"]');
   await page.click('[data-page="history"]');
-  await page.setInputFiles('#hist-files', [...fs.readdirSync('/tmp/coros/tcx').map((f) => '/tmp/coros/tcx/' + f), '/tmp/coros/tm/2026-11-10.tcx']);
+  await page.setInputFiles('#hist-files', [...fx.outdoor(), fx.tm('2026-11-10')]);
   await page.waitForSelector('.results li'); await page.waitForTimeout(600);
   await page.click('[data-page="plan"]'); await page.waitForTimeout(300);
   console.log('buttons before plan:', await page.locator('[data-act="ai-copy"]').count());

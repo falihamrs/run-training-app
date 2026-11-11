@@ -344,3 +344,14 @@ test('a plan that is not a real training block says so, and normal plans do not'
     assert.ok(!x.messages.some((m) => m.code === 'notABlock'), x.messages.map((m) => m.text).join(' '));
   }
 });
+
+test('a small road plan never has a run shorter than 15 minutes, even in recovery weeks', () => {
+  // found by the fuzzer: a 0.8× recovery long run of 2.5 km at a fast easy pace came out at 14 min
+  for (const baselineWeeklyKm of [0, 2, 5]) {
+    const s = settingsFor({ runs: 4, distanceKm: 21.1, weeks: 56, experience: 'experienced', pace: 270, unavailable: ['Tue', 'Thu', 'Sun'] });
+    s.schedule.longRunDay = 'Wed';
+    const r = generatePlan(s, hist({ baselineWeeklyKm, baselineWeeklyHours: 9, longestRunKm: 8, longestRunMin: 122 }), { today: TODAY });
+    assert.ok(r.plan, r.messages.map((m) => m.text).join(' '));
+    for (const w of r.plan.weeks) for (const x of runs(w)) assert.ok(x.plannedMin >= 15, `base ${baselineWeeklyKm} km: ${x.id} ${x.code} ${x.plannedMin} min`);
+  }
+});
