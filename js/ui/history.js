@@ -350,6 +350,8 @@ export function mountHistory(el, { storage, getSettings, today, tzOffsetMin = nu
         if (patch) await storage.updateRun(c.id, patch);
       } else if (act === 'save') {
         c.error = validateSplitValues(c.values, c.unit);
+        // an untouched editor must not wipe the climbing the watch measured
+        if (!c.error && c.values.every((v) => v === '' || v == null)) c.error = 'Nothing typed yet. Type a value (0 counts), or press Cancel.';
         if (c.error) return render();
         await storage.updateRun(c.id, manualClimbPatch(c.run, c.stream, c.values, c.unit, c.basis));
       } else return;

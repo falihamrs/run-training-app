@@ -166,8 +166,12 @@ export function aiReport({ plan, runs, settings, today, range = 'recent', advice
   }
 
   // runs by workout, and runs that match nothing
-  const byWorkout = new Map(runs.filter((r) => r.matchedWorkoutId).map((r) => [r.matchedWorkoutId, r]));
   const weeks = weeksInRange(plan, today, range);
+  // one run per workout (the first matched); every other run is listed under the week of its date,
+  // so no run is shown twice or left out
+  const byWorkout = new Map();
+  for (const r of runs) if (r.matchedWorkoutId && !byWorkout.has(r.matchedWorkoutId)) byWorkout.set(r.matchedWorkoutId, r);
+  const shown = new Set(weeks.flatMap((w) => w.workouts).map((x) => byWorkout.get(x.id)).filter(Boolean));
   if (weeks.length) {
     L.push('## Weeks');
     L.push('');
@@ -192,9 +196,8 @@ export function aiReport({ plan, runs, settings, today, range = 'recent', advice
       L.push(`### Week ${w.n} · ${w.start} · ${PHASE[w.phase]}${w.kind === 'down' ? ' (down week)' : ''}`);
       for (const f of w.flags ?? []) L.push(`> ${f}`);
       for (const x of w.workouts) L.push(...workoutBlock(x, ctx, byWorkout.get(x.id) ?? null, today, seen));
-      const ids = new Set(w.workouts.map((x) => x.id));
       const end = addDays(w.start, 6);
-      const extra = runs.filter((r) => r.date >= w.start && r.date <= end && (!r.matchedWorkoutId || !ids.has(r.matchedWorkoutId)));
+      const extra = runs.filter((r) => r.date >= w.start && r.date <= end && !shown.has(r));
       for (const r of extra) {
         const [first, ...rest] = runLine(r, trail);
         L.push(`- **${weekdayOf(r.date)} ${r.date} · Unplanned or unmatched run**: ${first}`);
@@ -207,10 +210,21 @@ export function aiReport({ plan, runs, settings, today, range = 'recent', advice
   // runs before the plan (or all runs when there is no plan) in the last 8 weeks
   const firstDay = plan?.weeks.length ? (range === 'all' ? plan.weeks[0].start : weeks[0]?.start ?? plan.weeks[0].start) : null;
   const since = addDays(today, -56);
-  const before = runs.filter((r) => r.date >= since && r.date <= today && (!firstDay || r.date < firstDay)).sort((a, b) => (a.date < b.date ? -1 : 1));
+  const before = runs.filter((r) => r.date >= since && r.date <= today && (!firstDay || r.date < firstDay) && !shown.has(r)).sort((a, b) => (a.date < b.date ? -1 : 1));
   if (before.length) {
     L.push(plan ? '## Runs before the weeks above (last 8 weeks)' : '## Recent runs (last 8 weeks)');
     for (const r of before) {
+      const [first, ...rest] = runLine(r, trail);
+      L.push(`- **${weekdayOf(r.date)} ${r.date}**: ${first}`);
+      for (const l of rest) L.push(`  - ${l}`);
+    }
+    L.push('');
+  }
+  const lastDay = weeks.length ? addDays(weeks.at(-1).start, 6) : null;
+  const after = lastDay ? runs.filter((r) => r.date > lastDay && r.date <= today && !shown.has(r)).sort((a, b) => (a.date < b.date ? -1 : 1)) : [];
+  if (after.length) {
+    L.push('## Runs after the weeks above');
+    for (const r of after) {
       const [first, ...rest] = runLine(r, trail);
       L.push(`- **${weekdayOf(r.date)} ${r.date}**: ${first}`);
       for (const l of rest) L.push(`  - ${l}`);

@@ -59,3 +59,19 @@ test('works without a plan and for road plans', () => {
   assert.ok(!/undefined|NaN/.test(rmd));
   assert.equal((rmd.match(/^### Week/gm) ?? []).length, rp.weeks.length);
 });
+
+test('every run appears exactly once, also when matched across weeks or twice', () => {
+  const today = addDays(w(4).start, 6);
+  const long = w(2).workouts.find((x) => x.role === 'L');
+  const runs = [
+    run(addDays(long.date, 1), { id: 1, km: 11.1, matchedWorkoutId: long.id }), // long run done on Monday of week 3
+    run(long.date, { id: 2, km: 12.2, matchedWorkoutId: long.id }), // a second run matched to the same workout
+    run(addDays(w(3).start, 2), { id: 3, km: 13.3, matchedWorkoutId: 'w99-Mon' }), // stale match
+    run(addDays(plan.raceDate, 3), { id: 4, km: 14.4 }),
+  ];
+  const md = aiReport({ plan, runs, settings, today, range: 'all' });
+  for (const km of ['11.1', '12.2', '13.3']) assert.equal(md.split(`${km} km,`).length - 1, 1, `${km} km appears ${md.split(`${km} km,`).length - 1} times`);
+  assert.ok(!md.includes('14.4 km')); // after today
+  const late = aiReport({ plan, runs, settings, today: addDays(plan.raceDate, 10), range: 'all' });
+  assert.match(late, /## Runs after the weeks above[\s\S]*14\.4 km/);
+});
