@@ -10,7 +10,7 @@ const fx = require('./fixtures.cjs');
   await page.goto('http://localhost:8080/index.html#history');
   await page.waitForSelector('#hist-files');
   await page.setInputFiles('#hist-files', [fx.tcx('2026-11-04'), fx.tcx('2026-11-08')]);
-  await page.waitForSelector('.results li'); await page.waitForTimeout(600);
+  await page.waitForSelector('.results li', { state: 'attached' }); await page.waitForTimeout(600);
   const txt = async () => (await page.textContent('#page-history')).replace(/\s+/g, ' ');
   const row = async () => (await page.locator('table.list tbody tr').first().textContent()).replace(/\s+/g, ' ');
   console.log('before :', await row());

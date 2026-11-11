@@ -11,7 +11,7 @@ const fs = require('fs');
   await page.goto('http://localhost:8080/index.html#history');
   await page.waitForSelector('#hist-files');
   await page.setInputFiles('#hist-files', fx.outdoor());
-  await page.waitForSelector('.results li');
+  await page.waitForSelector('.results li', { state: 'attached' });
   await page.waitForTimeout(600);
   const txt = async () => (await page.textContent('#page-history')).replace(/\s+/g, ' ');
   console.log('usage:', (await txt()).match(/Housekeeping.{0,200}/)[0]);

@@ -12,6 +12,7 @@ import { applyChanges, canUndo, editsLostByRegen, lockReason, undoLast } from '.
 import { applyPlanItems, parseChangeBlock, previewChanges, settingsWith } from '../core/aiChanges.js';
 import { esc } from './util.js';
 
+const NOTICE_MS = 6000; // how long a success message stays on screen
 const PHASE_LABEL = { base: 'Base', build: 'Build', peak: 'Peak', taper: 'Taper' };
 const hm = (min) => `${Math.floor(min / 60)} h ${String(Math.round(min % 60)).padStart(2, '0')} min`;
 
@@ -34,7 +35,7 @@ async function copyText(text) {
 }
 
 export function mountPlan(el, { storage, today, getSettings, getHistory, goto, onUseThreshold = () => {}, isSettingsDirty = () => false, getBackupInfo = async () => null, applySettings = null }) {
-  const state = { plan: null, messages: [], loaded: false, notice: null, confirmRegen: false, confirmNew: false, open: new Set(), runs: [], suggestState: {}, backup: null, editing: null, editMsg: null, ai: null, pick: null };
+  const state = { plan: null, messages: [], loaded: false, notice: null, confirmRegen: false, confirmNew: false, open: new Set(), runs: [], suggestState: {}, backup: null, editing: null, editMsg: null, ai: null, pick: null, notesOpen: false };
 
   const ctx = () => {
     const s = getSettings();
@@ -44,6 +45,19 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
   function messagesHtml(list) {
     if (!list.length) return '';
     return `<ul class="checks">${list.map((m) => `<li class="${m.level === 'block' ? 'err' : m.level === 'warn' ? 'warn' : ''}">${esc(m.text)}</li>`).join('')}</ul>`;
+  }
+
+  // The notes of a plan, in one block: the status tag already says WARN, so the list can stay closed.
+  // The race duration is in the summary line above it, so it is not repeated here.
+  function notesHtml() {
+    const list = state.messages.filter((m) => m.code !== 'duration');
+    if (!list.length) return '';
+    const warns = list.filter((m) => m.level === 'warn' || m.level === 'block');
+    const first = warns[0] ?? list[0];
+    const label = warns.length ? `${warns.length} warning${warns.length === 1 ? '' : 's'}` : `${list.length} note${list.length === 1 ? '' : 's'}`;
+    return `<details class="plan-notes" data-notes ${state.notesOpen ? 'open' : ''}>
+      <summary><strong>Plan notes</strong> <span class="tag ${warns.length ? 'coros' : ''}">${label}</span> <span class="preview muted small">${esc(first.text)}</span></summary>
+      ${messagesHtml(list)}</details>`;
   }
 
   function bannersHtml() {
@@ -77,8 +91,8 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
     const peak = trail ? `Peak ${p.peak.hours} h and ${p.peak.vertM} m a week.` : `Peak ${p.peak.km} km a week.`;
     return `${''}<section class="card"><h2>${esc(p.mode === 'trail' ? 'Trail' : 'Road')} plan: ${esc(p.startDate)} to ${esc(p.raceDate)} <span class="tag ${p.status === 'WARN' ? 'coros' : ''}">${esc(p.status)}</span></h2>
       <p>${esc(facts)} ${esc(peak)} ${p.weeks.length} weeks.</p>
-      ${messagesHtml(state.messages)}
-      ${state.notice ? `<p class="notice ${state.notice.kind}">${esc(state.notice.text)}</p>` : ''}
+      ${notesHtml()}
+      ${state.notice ? `<p class="notice ${state.notice.kind}" data-notice role="status">${esc(state.notice.text)}</p>` : ''}
       <p class="row">
         <button type="button" data-act="csv">Download CSV</button>
         <button type="button" data-act="copy-plan">Copy all weeks as text</button>
@@ -427,6 +441,17 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
 
   function render() {
     el.innerHTML = `${bannersHtml()}${headerCard()}${state.plan ? aiFeedbackHtml() : ''}${state.plan ? suggestionsHtml() : ''}${state.plan ? state.plan.weeks.map(weekHtml).join('') : ''}`;
+    const n = state.notice;
+    if (n && n.kind === 'ok' && !n.timer) {
+      n.timer = setTimeout(() => {
+        if (state.notice !== n) return;
+        state.notice = null;
+        const node = el.querySelector('[data-notice]');
+        if (!node) return;
+        node.classList.add('fading');
+        setTimeout(() => node.remove(), 400);
+      }, NOTICE_MS);
+    }
   }
 
   async function generate({ keepPast = false, override = false } = {}) {
@@ -451,6 +476,7 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
       return;
     }
     state.messages = r.messages;
+    state.notesOpen = true;
     if (!r.plan) {
       if (state.plan) state.notice = { kind: 'error', text: `The plan could not be ${keepPast ? 'regenerated' : 'replaced'}. See the messages above; your current plan is unchanged.` };
       render();
@@ -518,6 +544,8 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
   });
 
   el.addEventListener('toggle', (e) => {
+    const notes = e.target.closest?.('details.plan-notes');
+    if (notes) { state.notesOpen = notes.open; return; }
     const d = e.target.closest?.('details.week');
     if (!d) return;
     const n = Number(d.dataset.week);

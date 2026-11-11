@@ -41,14 +41,43 @@ export function mountHistory(el, { storage, getSettings, today, tzOffsetMin = nu
     return analyzeHistory(state.runs, { planStart: opts.planStart ?? s.schedule.startDate, asOf: today, lthr, selfReport: state.selfReport, mode: s.race.mode, tzOffsetMin: tzOffsetMin ?? -new Date().getTimezoneOffset() });
   }
 
+  // One line for the whole import. Files that are not runs (walks, hikes, "Other") are skipped on purpose,
+  // so they are grey with an "Add anyway" button; only real problems are red.
+  function resultsHtml() {
+    const rs = state.results;
+    if (!rs.length) return '';
+    const sum = (k) => rs.reduce((n, r) => n + (r[k] ?? 0), 0);
+    const added = sum('added');
+    const dup = sum('dup');
+    const matched = sum('matched');
+    const skipFiles = rs.filter((r) => r.kind === 'skip');
+    const bad = rs.filter((r) => r.kind === 'bad');
+    const sports = [...new Set(skipFiles.flatMap((r) => r.notRun))];
+    const parts = [`<strong>${added} run${added === 1 ? '' : 's'} added</strong>${matched ? ` (${matched} matched to the plan)` : ''}`];
+    if (dup) parts.push(`${dup} already in your history`);
+    if (skipFiles.length) parts.push(`${skipFiles.length} file${skipFiles.length === 1 ? '' : 's'} skipped: not a run (${esc(sports.join(', '))})`);
+    const unusable = rs.filter((r) => r.kind === 'unusable');
+    if (unusable.length) parts.push(`${unusable.length} file${unusable.length === 1 ? '' : 's'} not usable (${esc([...new Set(unusable.flatMap((r) => r.rejected))].join(', '))})`);
+    if (bad.length) parts.push(`<span class="bad-text">${bad.length} could not be read</span>`);
+    const li = (r) => {
+      const i = rs.indexOf(r);
+      const again = r.kind === 'skip' && r.file && !state.busy ? ` <button type="button" class="link" data-skip-add="${i}" title="Count this activity as a run">Add anyway</button>` : '';
+      return `<li class="${r.kind}">${esc(r.name)}: ${esc(r.message)}${again}</li>`;
+    };
+    const rest = rs.filter((r) => r.kind !== 'bad');
+    const addAll = skipFiles.some((r) => r.file) && !state.busy ? ' <button type="button" class="link" data-skip-all>Add them anyway</button> <span class="muted small">Walks and hikes added this way count as runs.</span>' : '';
+    return `<p class="import-summary" role="status">${parts.join(' · ')}.${addAll}</p>
+      ${bad.length ? `<ul class="results">${bad.map(li).join('')}</ul>` : ''}
+      ${rest.length ? `<details class="results-detail" ${rest.length <= 3 ? 'open' : ''}><summary class="small muted">Details for ${rest.length} file${rest.length === 1 ? '' : 's'}</summary><ul class="results">${rest.map(li).join('')}</ul></details>` : ''}`;
+  }
+
   function uploadCard() {
-    const rows = state.results.map((r) => `<li class="${r.ok ? 'ok' : 'bad'}">${esc(r.name)}: ${esc(r.message)}</li>`).join('');
     return `<section class="card"><h2>Add activities</h2>
       <p class="muted">Choose one or many .tcx or .gpx files exported from Strava or Coros. Files are read in your browser and never uploaded anywhere.</p>
       <p><input type="file" id="hist-files" multiple accept=".tcx,.gpx,.xml" ${state.busy || !storage ? 'disabled' : ''}></p>
       <label class="inline"><input type="checkbox" data-opt="acceptOther" ${state.acceptOther ? 'checked' : ''}> Also accept activities labelled Other or with no sport (trail runs are sometimes exported that way)</label>
       ${state.busy ? '<p class="muted">Reading files…</p>' : ''}
-      ${rows ? `<ul class="results">${rows}</ul>` : ''}
+      ${resultsHtml()}
     </section>`;
   }
 
@@ -216,21 +245,27 @@ export function mountHistory(el, { storage, getSettings, today, tzOffsetMin = nu
     el._summary = h;
   }
 
-  async function importFiles(files) {
+  async function importFiles(files, { acceptOther = state.acceptOther, replace = false } = {}) {
     state.busy = true;
-    state.results = [];
+    if (!replace) state.results = [];
     render();
     await reload();
     const taken = new Set(runsByWorkout(state.runs).keys());
+    // a file imported again takes the place of its old line instead of being added at the end
+    const record = (r) => {
+      const i = replace ? state.results.findIndex((x) => x.name === r.name) : -1;
+      if (i >= 0) state.results[i] = r; else state.results.push(r);
+    };
     for (const file of files) {
       try {
         if (file.size > 30 * 1024 * 1024) throw new Error('This file is too large to be a run (over 30 MB).');
         const acts = parseActivityFile(await file.text(), file.name);
         let added = 0, skipped = 0, matched = 0, rejected = [];
+        const notRun = [];
         for (const act of acts) {
           const sport = String(act.sport).toLowerCase();
-          const isRun = /run|trail/.test(sport) || (state.acceptOther && (sport === 'other' || sport === 'unknown'));
-          if (!isRun) { rejected.push(`sport "${act.sport}"`); continue; }
+          const isRun = /run|trail/.test(sport) || (acceptOther && (sport === 'other' || sport === 'unknown'));
+          if (!isRun) { notRun.push(act.sport); continue; }
           act.sport = 'Running';
           // the offset in force when the run happened (daylight saving), or the run's own zone if recorded far away
           const lon = act.points?.find((pt) => pt.lon != null)?.lon ?? null;
@@ -254,10 +289,14 @@ export function mountHistory(el, { storage, getSettings, today, tzOffsetMin = nu
         if (added) parts.push(`${added} run${added > 1 ? 's' : ''} added`);
         if (matched) parts.push(`${matched} matched to the plan`);
         if (skipped) parts.push('already in your history');
-        if (rejected.length) parts.push(`skipped (${rejected.join(', ')})`);
-        state.results.push({ name: file.name, ok: added > 0 || skipped > 0, message: parts.join('; ') || (acts.length ? 'nothing to add' : 'no activity found in this file. It may be cut off or have no track points; export it again.') });
+        if (notRun.length) parts.push(`not a run (sport "${[...new Set(notRun)].join('", "')}")`);
+        if (rejected.length) parts.push(`could not be used (${rejected.join(', ')})`);
+        // ok: something was added; skip: not a run (can be added anyway); unusable: a run that is too short or has
+        // no distance (grey, nothing to add); bad: the file could not be read at all
+        const kind = added > 0 || skipped > 0 ? 'ok' : !acts.length ? 'bad' : rejected.length ? 'unusable' : notRun.length ? 'skip' : 'bad';
+        record({ name: file.name, file, kind, added, dup: skipped, matched, notRun, rejected, message: parts.join('; ') || (acts.length ? 'nothing to add' : 'no activity found in this file. It may be cut off or have no track points; export it again.') });
       } catch (err) {
-        state.results.push({ name: file.name, ok: false, message: err.message });
+        record({ name: file.name, kind: 'bad', message: err.message });
       }
     }
     state.busy = false;
@@ -331,8 +370,10 @@ export function mountHistory(el, { storage, getSettings, today, tzOffsetMin = nu
   });
 
   el.addEventListener('click', async (e) => {
-    const b = e.target.closest('[data-del],[data-act],[data-hk],[data-climb],[data-climb-do]');
+    const b = e.target.closest('[data-del],[data-act],[data-hk],[data-climb],[data-climb-do],[data-skip-add],[data-skip-all]');
     if (!b) return;
+    if (b.dataset.skipAdd != null) { const r = state.results[Number(b.dataset.skipAdd)]; return r?.file ? importFiles([r.file], { acceptOther: true, replace: true }) : undefined; }
+    if (b.dataset.skipAll != null) { const fs = state.results.filter((r) => r.kind === 'skip' && r.file).map((r) => r.file); return fs.length ? importFiles(fs, { acceptOther: true, replace: true }) : undefined; }
     if (b.dataset.climb) return openClimb(Number(b.dataset.climb));
     if (b.dataset.climbDo) {
       const c = state.climb;

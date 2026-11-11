@@ -68,6 +68,10 @@ table.days td { padding: 6px 8px; }
 .results li { padding: 4px 8px; border-radius: 6px; margin-bottom: 4px; }
 .results li.ok { background: var(--ok-bg); color: var(--ok); }
 .results li.bad { background: var(--err-bg); color: var(--err); }
+.results li.skip, .results li.unusable { background: var(--bg); color: var(--muted); border: 1px solid var(--line); }
+.import-summary { margin: 10px 0 6px; }
+.import-summary .bad-text { color: var(--err); font-weight: 600; }
+details.results-detail > summary { cursor: pointer; margin-top: 4px; }
 .notice.warn { background: var(--warn-bg); color: var(--warn); }
 .scroll { overflow-x: auto; }
 details summary { cursor: pointer; margin: 8px 0; }
@@ -108,3 +112,11 @@ form.edit .field { margin-right: 12px; }
 .ai-items { list-style: none; padding-left: 0; }
 .ai-items li { padding: 6px 0; border-top: 1px solid var(--line); }
 .err { color: var(--err, #b42318); }
+
+/* plan notes: one collapsible block instead of a stack of warnings */
+details.plan-notes { margin: 8px 0; border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; }
+details.plan-notes > summary { cursor: pointer; display: flex; flex-wrap: nowrap; gap: 8px; align-items: baseline; min-width: 0; }
+details.plan-notes > summary .preview { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+details.plan-notes[open] > summary .preview { display: none; }
+details.plan-notes ul.checks { margin: 8px 0 2px; }
+.notice.fading { opacity: 0; transition: opacity .4s ease; }

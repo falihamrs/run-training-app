@@ -167,6 +167,14 @@ and sessions with a matched run are not drop targets. A swap or move follows the
 form, and a climbing session that lands on a flat day gets a warning (an AI change is refused). Swaps are
 saved and undone as one step. An AI can ask for one with `{ "op": "swap", "workout": "w6-Tue", "with": "w6-Thu" }`.
 
+**Notices.** Warnings and info about the plan (below-baseline start, climbing that cannot be placed, and so
+on) sit in one collapsible "Plan notes" block, open after you generate a plan and closed after that. The
+race duration is shown once, in the plan header. "Saved" style messages fade after about six seconds.
+
+**History import.** After adding files you get one summary line (runs added, files already in your history,
+files not usable) and a "Details" list. Files skipped only because of their sport label offer "Add anyway";
+files that are too short or have no distance are shown in grey, not as errors.
+
 ## Applying AI feedback
 
 The AI report ends with a format for changes: the AI is asked to finish its answer with a `plan-changes`

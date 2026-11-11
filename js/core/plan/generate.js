@@ -605,6 +605,9 @@ export function generatePlan(settingsIn, history, { today, id = 'main', now = nu
     return fixMemo;
   };
   if (!noRunAdvice && trail && coverage.worst < COVERAGE_MIN && climbDays.length === 0) {
+    // this says the same as the feasibility note "No hills day is set", and more, so it replaces it
+    const general = messages.findIndex((m) => m.code === 'hills');
+    if (general >= 0) messages.splice(general, 1);
     messages.push({ level: 'warn', code: 'noClimbDays', recommendedRuns: null, text: `None of your available days is set to hills or incline, so only ${Math.round(coverage.worst * 100)}% of the climbing target can be placed. More runs will not fix this. Set at least one weekday to incline or hills in Settings, Schedule.` });
   } else if (!noRunAdvice && trail && coverage.gaps.length && coverage.gaps.every((g) => g.label === 'climbing') && climbDayFix(climbDays)) {
     const { day, coverage: c } = climbDayFix(climbDays);

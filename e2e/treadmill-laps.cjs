@@ -11,7 +11,7 @@ const fx = require('./fixtures.cjs');
   await page.goto('http://localhost:8080/index.html#history');
   await page.waitForSelector('#hist-files');
   await page.setInputFiles('#hist-files', [fx.tm('2026-11-10')]);
-  await page.waitForSelector('.results li'); await page.waitForTimeout(600);
+  await page.waitForSelector('.results li', { state: 'attached' }); await page.waitForTimeout(600);
   const row = async () => (await page.locator('tr:has([data-climb])').first().textContent()).replace(/\s+/g, ' ').trim();
   console.log('row    :', await row());
   await page.locator('[data-climb]').first().click();

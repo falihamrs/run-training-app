@@ -21,7 +21,7 @@ const fs = require('fs');
   await page.click('[data-action="save"]');
   await page.click('[data-page="history"]');
   await page.setInputFiles('#hist-files', [fx.tcx('2026-11-01')]);
-  await page.waitForSelector('.results li');
+  await page.waitForSelector('.results li', { state: 'attached' });
   await page.click('[data-page="plan"]');
   await page.click('[data-act="generate"]');
   await page.waitForTimeout(800);

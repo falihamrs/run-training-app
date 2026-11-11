@@ -19,7 +19,7 @@ const fs = require('fs');
   await page.click('[data-action="add-threshold"]'); await page.click('[data-action="save"]');
   await page.click('[data-page="history"]');
   await page.setInputFiles('#hist-files', [...fx.outdoor(), fx.tm('2026-11-10')]);
-  await page.waitForSelector('.results li'); await page.waitForTimeout(600);
+  await page.waitForSelector('.results li', { state: 'attached' }); await page.waitForTimeout(600);
   await page.click('[data-page="plan"]'); await page.waitForTimeout(300);
   console.log('buttons before plan:', await page.locator('[data-act="ai-copy"]').count());
   await page.click('[data-act="generate"]'); await page.waitForTimeout(1500);
