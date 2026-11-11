@@ -537,6 +537,20 @@ export function mountSettings(root, { storage, settings, savedAt = null, today, 
       render();
     },
     currentSettings: () => clone(state.settings),
+    /** Saves settings changed elsewhere (AI feedback). Refuses while there are unsaved edits here. */
+    async applySettings(next) {
+      if (!storage) throw new Error('Saving is not available in this browser.');
+      if (dirty()) throw new Error('Settings has unsaved changes. Save or undo them first.');
+      const r = validateSettings(next, { today });
+      if (r.errors.length) throw new Error(r.errors.map((e) => e.message).join(' '));
+      const norm = clone(r.normalized);
+      state.savedAt = await storage.saveSettings(norm);
+      state.settings = norm;
+      state.saved = JSON.stringify(norm);
+      state.saveError = null;
+      render();
+      return norm;
+    },
     isDirty: dirty,
     openTab(tab) { state.tab = tab; render(); },
   };

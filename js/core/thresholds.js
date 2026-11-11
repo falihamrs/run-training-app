@@ -5,7 +5,7 @@ import { isValidDate, addDays } from './dates.js';
 
 export const LTHR_RANGE = [120, 200];
 export const PACE_RANGE = [150, 540]; // seconds per km (2:30 to 9:00)
-export const SOURCES = ['manual', 'suggested', 'test'];
+export const SOURCES = ['manual', 'suggested', 'test', 'ai'];
 
 export function sortThresholds(list) {
   return [...list].sort((a, b) => (a.effectiveFrom < b.effectiveFrom ? -1 : a.effectiveFrom > b.effectiveFrom ? 1 : 0));

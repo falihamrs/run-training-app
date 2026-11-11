@@ -9,6 +9,7 @@ import { canInsertTest, climbTrend, goalAdvice, insertTest, nextWorkoutDate, sug
 import { earliestThreshold, thresholdForDate } from '../core/thresholds.js';
 import { aiReport } from '../core/aiExport.js';
 import { applyChanges, canUndo, editsLostByRegen, lockReason, undoLast } from '../core/edits.js';
+import { applyPlanItems, parseChangeBlock, previewChanges, settingsWith } from '../core/aiChanges.js';
 import { esc } from './util.js';
 
 const PHASE_LABEL = { base: 'Base', build: 'Build', peak: 'Peak', taper: 'Taper' };
@@ -32,8 +33,8 @@ async function copyText(text) {
   }
 }
 
-export function mountPlan(el, { storage, today, getSettings, getHistory, goto, onUseThreshold = () => {}, isSettingsDirty = () => false, getBackupInfo = async () => null }) {
-  const state = { plan: null, messages: [], loaded: false, notice: null, confirmRegen: false, confirmNew: false, open: new Set(), runs: [], suggestState: {}, backup: null, editing: null, editMsg: null };
+export function mountPlan(el, { storage, today, getSettings, getHistory, goto, onUseThreshold = () => {}, isSettingsDirty = () => false, getBackupInfo = async () => null, applySettings = null }) {
+  const state = { plan: null, messages: [], loaded: false, notice: null, confirmRegen: false, confirmNew: false, open: new Set(), runs: [], suggestState: {}, backup: null, editing: null, editMsg: null, ai: null };
 
   const ctx = () => {
     const s = getSettings();
@@ -185,6 +186,123 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
       ${body}${actual}</article>`;
   }
 
+  // ---------- AI feedback ----------
+
+  function aiFeedbackHtml() {
+    const a = state.ai;
+    const items = a?.items ?? [];
+    const row = (it, i) => {
+      const can = it.status === 'ok';
+      const box = can ? `<input type="checkbox" data-ai-item="${i}" ${a.checked.has(i) ? 'checked' : ''} aria-label="Apply: ${esc(it.text)}">` : '';
+      const tag = it.kind === 'setting' ? '<span class="tag">setting</span> ' : '';
+      const body = it.status === 'suggestion'
+        ? `<strong>Threshold suggestion:</strong> ${esc(it.text)} <button type="button" class="link" data-ai-threshold="${i}">Review in Settings</button>`
+        : `${tag}${can ? '' : '<s>'}${esc(it.text)}${can ? '' : '</s>'}`;
+      return `<li class="${it.status === 'refused' ? 'muted' : ''}"><label>${box} ${body}</label>
+        ${it.reason ? `<div class="small muted">Reason: ${esc(it.reason)}</div>` : ''}
+        ${it.error ? `<div class="small err">${it.kind === 'unknown' ? '' : 'Refused: '}${esc(it.error)}</div>` : ''}</li>`;
+    };
+    const lost = editsLostByRegen(state.plan, nextMonday(today));
+    const hasSetting = items.some((it, i) => it.kind === 'setting' && a.checked.has(i));
+    return `<details class="card" id="ai-feedback" ${a ? 'open' : ''}><summary><strong>Apply AI feedback</strong> <span class="muted small">upload or paste the AI's answer to the report</span></summary>
+      <p class="muted small">Upload the AI's answer (.md or .txt) or paste it. The app reads only the <code>plan-changes</code> block at the end of the answer and shows each change for you to accept.</p>
+      <p class="row"><label class="field"><span class="lbl">Answer file</span><input type="file" accept=".md,.markdown,.txt,text/markdown,text/plain" data-ai-file></label></p>
+      <details ${a?.pasteOpen ? 'open' : ''}><summary>Or paste the answer</summary>
+        <textarea data-ai-text rows="6" style="width:100%" placeholder="Paste the AI's whole answer here">${esc(a?.pasted ?? '')}</textarea>
+        <p><button type="button" data-act="ai-read">Read changes</button></p></details>
+      ${a?.error ? `<p class="notice error">${esc(a.error)}</p>` : ''}
+      ${items.length ? `<p class="small">${esc(a.source)}: ${items.filter((x) => x.status === 'ok').length} change${items.filter((x) => x.status === 'ok').length === 1 ? '' : 's'} can be applied, ${items.filter((x) => x.status === 'refused').length} refused${items.some((x) => x.status === 'suggestion') ? ', 1 threshold suggestion' : ''}.</p>
+        <ul class="ai-items">${items.map(row).join('')}</ul>
+        ${hasSetting ? `<p class="notice warn small">Setting changes are saved in Settings and rebuild the plan from ${esc(nextMonday(today))}.${lost ? ` Your ${lost} edit${lost === 1 ? '' : 's'} in those weeks will be replaced.` : ''} The plan changes are applied after that, where their workout still exists. Undo restores the plan, but the settings stay changed.</p>` : ''}
+        <p class="row"><button type="button" class="primary" data-act="ai-apply" ${a.checked.size ? '' : 'disabled'}>Apply selected</button> <button type="button" data-act="ai-discard">Discard</button></p>` : ''}
+      ${a?.result ? `<p class="notice ${a.result.kind}" role="status">${esc(a.result.text)}</p>` : ''}
+    </details>`;
+  }
+
+  function readAi(text, source) {
+    const parsed = parseChangeBlock(text);
+    if (!parsed.found) {
+      state.ai = { ...(state.ai ?? {}), items: [], checked: new Set(), error: parsed.error, result: null, source };
+      return render();
+    }
+    if (!parsed.changes.length) {
+      state.ai = { ...(state.ai ?? {}), items: [], checked: new Set(), error: 'The block has no changes in it. The AI did not recommend any.', result: null, source };
+      return render();
+    }
+    const items = previewChanges(state.plan, getSettings(), parsed.changes.slice(0, 50), { today, runs: state.runs });
+    state.ai = { ...(state.ai ?? {}), raw: parsed.changes.slice(0, 50), items, checked: new Set(items.map((it, i) => (it.status === 'ok' ? i : -1)).filter((i) => i >= 0)), error: null, result: null, source };
+    return repreview().then(() => el.querySelector('#ai-feedback')?.scrollIntoView({ block: 'start' }));
+  }
+
+  // The plan the ticked setting changes would produce (rebuilt from next Monday), or the current plan.
+  async function planAfterSettings(settingItems) {
+    if (!settingItems.length) return { plan: state.plan, settings: getSettings() };
+    const next = settingsWith(getSettings(), settingItems);
+    const history = await getHistory({ planStart: nextMonday(today) });
+    const rg = regenerateFrom(state.plan, next, history, { today, now: new Date().toISOString() });
+    return { plan: rg.plan, settings: next, messages: rg.messages };
+  }
+
+  // Workout changes are checked against the plan they will really be applied to: after a rebuild when
+  // setting changes are ticked. Ticks on workout changes are kept where they still apply.
+  async function repreview() {
+    const a = state.ai;
+    const settingItems = a.items.filter((it, i) => it.kind === 'setting' && it.status === 'ok' && a.checked.has(i));
+    const { plan: base, messages } = await planAfterSettings(settingItems);
+    const fresh = base ? previewChanges(base, getSettings(), a.raw, { today, runs: state.runs }) : a.items;
+    a.items = a.items.map((old, i) => {
+      if (old.kind !== 'plan') return old;
+      const it = fresh[i];
+      if (!base) return { ...old, status: 'refused', error: `With the ticked setting changes the plan cannot be rebuilt: ${(messages ?? []).map((m) => m.text).join(' ')}` };
+      if (settingItems.length && it.status === 'refused' && /no workout/.test(it.error)) return { ...it, error: 'After the setting changes this workout is not in the rebuilt week any more.' };
+      return settingItems.length && it.status === 'ok' ? { ...it, text: `${it.text} (in the rebuilt plan)` } : it;
+    });
+    a.items.forEach((it, i) => { if (it.kind === 'plan' && it.status !== 'ok') a.checked.delete(i); });
+    render();
+  }
+
+  async function applyAi() {
+    const a = state.ai;
+    const chosen = a.items.filter((_, i) => a.checked.has(i));
+    const settingItems = chosen.filter((it) => it.kind === 'setting');
+    const planItems = chosen.filter((it) => it.kind === 'plan');
+    const at = new Date().toISOString();
+    let plan = state.plan;
+    const done = [];
+    const skipped = [];
+    if (settingItems.length) {
+      if (!applySettings) { a.result = { kind: 'error', text: 'Settings cannot be changed from here.' }; return render(); }
+      if (isSettingsDirty()) { a.result = { kind: 'error', text: 'Settings has unsaved changes. Save or undo them in Settings first, then apply again.' }; return render(); }
+      let next;
+      try { next = await applySettings(settingsWith(getSettings(), settingItems)); }
+      catch (err) { a.result = { kind: 'error', text: `The settings could not be saved: ${err.message}` }; return render(); }
+      const history = await getHistory({ planStart: nextMonday(today) });
+      const rg = regenerateFrom(plan, next, history, { today, now: at });
+      if (!rg.plan) {
+        a.result = { kind: 'error', text: `The settings were saved, but the plan could not be rebuilt: ${rg.messages.map((m) => m.text).join(' ')} Change the settings back in Settings, or press Regenerate after fixing them.` };
+        return render();
+      }
+      state.messages = rg.messages;
+      plan = { ...rg.plan, edits: [...(rg.plan.edits ?? []), ...settingItems.map((it) => ({ at, source: 'ai', change: it.change, summary: `${it.setting.label} (plan rebuilt from ${nextMonday(today)})`, reason: it.reason, warnings: [] }))] };
+      done.push(...settingItems.map((it) => it.setting.label));
+    }
+    if (planItems.length) {
+      const r = applyPlanItems(plan, planItems, { today, runs: state.runs, label: 'AI feedback' });
+      plan = r.plan;
+      r.results.forEach((x) => (x.ok ? done.push(x.summary) : skipped.push(`${x.change.workout ?? `week ${x.change.week}`}: ${x.error}`)));
+    }
+    if (plan === state.plan) { a.result = { kind: 'error', text: `Nothing was applied. ${skipped.join(' ')}` }; return render(); }
+    // one Undo reverses the whole feedback, rebuild included (the settings stay changed)
+    const before = state.plan;
+    plan = { ...plan, undo: [...(before.undo ?? []), { label: settingItems.length ? 'AI feedback (settings stay changed)' : 'AI feedback', weeks: before.weeks, edits: before.edits ?? [] }].slice(-10) };
+    state.plan = plan;
+    if (storage) {
+      try { await storage.savePlan(plan); } catch (err) { a.result = { kind: 'error', text: `The changes could not be saved: ${err.message}` }; return render(); }
+    }
+    state.ai = { items: [], checked: new Set(), error: null, source: a.source, result: { kind: skipped.length ? 'warn' : 'ok', text: `Applied ${done.length} change${done.length === 1 ? '' : 's'}: ${done.join('; ')}.${skipped.length ? ` Not applied: ${skipped.join(' ')}` : ''} Undo is in the plan header.` } };
+    render();
+  }
+
   function editable(w) {
     return !lockReason(state.plan, w.id, { today, runs: state.runs });
   }
@@ -256,7 +374,7 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
   }
 
   function render() {
-    el.innerHTML = `${bannersHtml()}${headerCard()}${state.plan ? suggestionsHtml() : ''}${state.plan ? state.plan.weeks.map(weekHtml).join('') : ''}`;
+    el.innerHTML = `${bannersHtml()}${headerCard()}${state.plan ? aiFeedbackHtml() : ''}${state.plan ? suggestionsHtml() : ''}${state.plan ? state.plan.weeks.map(weekHtml).join('') : ''}`;
   }
 
   async function generate({ keepPast = false, override = false } = {}) {
@@ -328,6 +446,23 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
 
   el.addEventListener('change', (e) => {
     if (e.target.dataset?.aiRange != null) state.aiRange = e.target.value === 'all' ? 'all' : 'recent';
+    if (e.target.dataset?.aiItem != null) {
+      const i = Number(e.target.dataset.aiItem);
+      if (e.target.checked) state.ai.checked.add(i); else state.ai.checked.delete(i);
+      if (state.ai.items[i].kind === 'setting') {
+        // workout changes depend on whether the plan is rebuilt first: tick them again where they now apply
+        state.ai.items.forEach((it, k) => { if (it.kind === 'plan') state.ai.checked.add(k); });
+        repreview();
+        return;
+      }
+      const btn = el.querySelector('[data-act="ai-apply"]');
+      if (btn) btn.disabled = !state.ai.checked.size;
+    }
+    if (e.target.dataset?.aiFile != null && e.target.files?.[0]) {
+      const f = e.target.files[0];
+      if (f.size > 2_000_000) { state.ai = { ...(state.ai ?? {}), items: [], checked: new Set(), error: 'That file is too large for an AI answer (over 2 MB).' }; render(); return; }
+      f.text().then((t) => readAi(t, f.name)).catch((err) => { state.ai = { ...(state.ai ?? {}), items: [], checked: new Set(), error: `Could not read the file: ${err.message}` }; render(); });
+    }
   });
 
   el.addEventListener('toggle', (e) => {
@@ -338,8 +473,12 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
   }, true);
 
   el.addEventListener('click', async (e) => {
-    const b = e.target.closest('[data-act],[data-copy-workout],[data-copy-week],[data-go],[data-sg],[data-test],[data-edit],[data-edit-do],[data-scale-do]');
+    const b = e.target.closest('[data-act],[data-copy-workout],[data-copy-week],[data-go],[data-sg],[data-test],[data-edit],[data-edit-do],[data-scale-do],[data-ai-threshold]');
     if (!b) return;
+    if (b.dataset.aiThreshold != null) {
+      const t = state.ai.items[Number(b.dataset.aiThreshold)].threshold;
+      return onUseThreshold({ lthr: t.lthr, paceSecPerKm: t.paceSecPerKm, effectiveFrom: t.effectiveFrom, source: 'ai' });
+    }
     if (b.dataset.edit) { state.editing = b.dataset.edit; state.editMsg = null; keepOpen(); return render(); }
     if (b.dataset.editDo) {
       const form = b.closest('[data-edit-form]');
@@ -409,6 +548,13 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
       setTimeout(() => URL.revokeObjectURL(a.href), 1000);
       return;
     }
+    if (act === 'ai-read') {
+      const t = el.querySelector('[data-ai-text]')?.value ?? '';
+      state.ai = { ...(state.ai ?? {}), pasted: t, pasteOpen: true };
+      return readAi(t, 'Pasted answer');
+    }
+    if (act === 'ai-apply') return applyAi();
+    if (act === 'ai-discard') { state.ai = null; return render(); }
     if (act === 'undo') {
       const label = state.plan.undo.at(-1).label;
       state.plan = undoLast(state.plan);

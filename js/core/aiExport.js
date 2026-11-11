@@ -7,6 +7,7 @@ import { resolveTargets } from './targets.js';
 import { earliestThreshold, sortThresholds, thresholdForDate } from './thresholds.js';
 import { formatDuration, formatPace } from './units.js';
 import { formatHrRange, formatPaceRange, resolveZones } from './zones.js';
+import { changeFormatText } from './aiChanges.js';
 
 const PHASE = { base: 'Base', build: 'Build', peak: 'Peak', taper: 'Taper' };
 const r1 = (v) => Math.round(v * 10) / 10;
@@ -57,7 +58,7 @@ function runLine(run, trail) {
 
 function workoutBlock(w, ctx, run, today, seen = new Set()) {
   const trail = ctx.mode === 'trail';
-  const head = `- **${w.weekday} ${w.date} · ${w.name}** (${w.code})`;
+  const head = `- **${w.weekday} ${w.date} · ${w.name}** (${w.code}) [${w.id}]${w.edited ? ' (edited)' : ''}`;
   if (w.code === 'RACE') {
     return [head, run ? `  - Done: ${runLine(run, trail).join('\n    ')}` : `  - ${w.date < today ? 'No run matched.' : 'Upcoming.'}`];
   }
@@ -231,5 +232,13 @@ export function aiReport({ plan, runs, settings, today, range = 'recent', advice
     }
     L.push('');
   }
+  // what was changed by hand or by an AI, so the next review knows
+  const edits = (plan?.edits ?? []).slice(-25);
+  if (edits.length) {
+    L.push('## Changes made to the plan');
+    for (const e of edits) L.push(`- ${String(e.at).slice(0, 10)} · ${e.source === 'ai' ? 'from AI feedback' : 'by me'}: ${e.summary}${e.reason ? ` — reason: ${e.reason}` : ''}`);
+    L.push('');
+  }
+  if (plan) L.push(changeFormatText(plan, today), '');
   return L.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd() + '\n';
 }

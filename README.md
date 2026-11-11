@@ -135,6 +135,30 @@ by week the target, planned and done volume and each workout with the run matche
 climbing included), plus unplanned runs and the runs before the plan. Choose the last 4 weeks and next 4
 (short enough to paste) or the whole plan. Nothing is sent anywhere: you copy it yourself.
 
+## Editing workouts
+
+Every workout from today on has an **Edit** link: change its length, move it to another day of the same
+week, make it an easy run, or make it a rest day. Each week has "Adjust this week" (10–30% less, 5–10%
+more). The same training checks as the plan apply: by hand you get a warning (for example a hard session
+next to another, or a week more than 10% over its target) and the edit still saves. Quality sessions can
+only get shorter. Past workouts, the race and workouts with a matched run cannot be edited. "Undo last
+change" in the plan header reverses the last edit (up to ten steps back), and "Regenerate" says how many
+edits it will replace.
+
+## Applying AI feedback
+
+The AI report ends with a format for changes: the AI is asked to finish its answer with a `plan-changes`
+block of JSON naming workouts by the ids shown in the report. Under "Apply AI feedback" on the Plan screen,
+upload its answer (.md or .txt) or paste it. Each change is listed with the AI's reason and a tick box:
+
+- Workout and week changes start next Monday and must pass every training check; ones that do not are
+  shown as refused, with the reason. Anything the app does not understand is listed, not guessed.
+- Setting changes (runs per week, long-run day, terrain or availability of a day) are saved in Settings
+  and rebuild the plan from next Monday. The workout changes are then checked against the rebuilt plan.
+- A threshold change is only a suggestion: "Review in Settings" opens it pre-filled for you to add.
+- "Apply selected" is one step that "Undo last change" reverses (settings stay changed).
+- Applied changes, with their reasons, appear in the next report, so the AI knows what it changed.
+
 ## Data and backups
 
 Data is stored in your browser's IndexedDB, on one device. Clearing browser data erases it, so

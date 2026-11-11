@@ -79,6 +79,7 @@ async function start() {
     isSettingsDirty: () => settingsUi.isDirty(),
     getBackupInfo: async () => (storage ? { lastExportedAt: (await storage.loadMeta()).lastExportedAt ?? null } : null),
     onUseThreshold: (suggestion) => { settingsUi.prefillThreshold(suggestion); show('settings'); },
+    applySettings: (s) => settingsUi.applySettings(s),
   });
   function show(page) {
     for (const [name, el] of Object.entries(pageEls)) el.hidden = name !== page;

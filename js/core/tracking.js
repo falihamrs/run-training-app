@@ -144,5 +144,7 @@ export function regenerateFrom(oldPlan, settings, history, { today, now = null }
     const workouts = w.workouts.map((x) => ({ ...x, week: n, id: x.id === 'race' ? 'race' : x.id.replace(/^w\d+/, `w${n}`) }));
     return { ...w, n, workouts };
   });
-  return { ...r, plan: { ...r.plan, startDate: keep.length ? oldPlan.startDate : r.plan.startDate, weeks: [...keep, ...weeks], regeneratedAt: now } };
+  // the log of changes carries over, and the regeneration itself can be undone
+  const undo = [...(oldPlan.undo ?? []), { label: `Regenerate from ${newStart}`, weeks: oldPlan.weeks, edits: oldPlan.edits ?? [] }].slice(-10);
+  return { ...r, plan: { ...r.plan, startDate: keep.length ? oldPlan.startDate : r.plan.startDate, weeks: [...keep, ...weeks], regeneratedAt: now, edits: oldPlan.edits ?? [], undo } };
 }
