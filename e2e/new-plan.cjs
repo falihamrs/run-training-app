@@ -47,6 +47,6 @@ const fs = require('fs');
   await page.click('[data-page="history"]');
   await page.waitForTimeout(300);
   console.log('select value after', await page.locator('table select').first().inputValue());
-  console.log('run still listed', (await page.textContent('#page-history')).includes('2026-11-01'));
+  console.log('run still listed', (await page.textContent('#page-history')).includes('1 Nov 2026'));
   await browser.close();
 })();

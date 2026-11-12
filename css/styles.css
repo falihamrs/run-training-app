@@ -126,7 +126,7 @@ details.plan-notes ul.checks { margin: 8px 0 2px; }
 .tw-row { padding: .3rem .5rem; border-radius: 6px; }
 .tw-row.today { background: #eef4ff; font-weight: 600; }
 .tw-row.missed { color: #8a5a00; }
-.tw-day { display: inline-block; min-width: 4.5rem; color: #555; font-weight: 400; }
+.tw-day { display: inline-block; min-width: 6.5rem; color: var(--muted); font-weight: 400; }
 
 .overview-svg { width: 100%; height: auto; display: block; margin-bottom: .5rem; }
 .ov-week { cursor: pointer; }
@@ -142,3 +142,29 @@ details.plan-notes ul.checks { margin: 8px 0 2px; }
 .ov-key.plan { background: var(--accent); opacity: .3; } .ov-key.done { background: var(--accent); } .ov-key.now { background: var(--line); }
 .ov-table table { border-collapse: collapse; font-size: .85rem; margin-top: .5rem; }
 .ov-table th, .ov-table td { text-align: left; padding: 2px 10px; border-bottom: 1px solid var(--line); }
+
+.checklist { list-style: none; margin: .5rem 0 1rem; padding: 0; }
+.checklist li { display: flex; gap: .75rem; align-items: flex-start; padding: .6rem 0; border-bottom: 1px solid var(--line); }
+.checklist li > span:nth-child(2) { flex: 1; }
+.checklist .mark { width: 1.4rem; height: 1.4rem; line-height: 1.4rem; text-align: center; border-radius: 50%; border: 1px solid var(--line); flex: none; }
+.checklist li.done .mark { background: var(--ok-bg); color: var(--ok); border-color: var(--ok); }
+.checklist li.done strong { color: var(--muted); font-weight: 500; }
+
+/* Plan page: on wide screens the This week card stays beside the long list of weeks */
+.plan-cols { display: block; }
+.plan-side:empty { display: none; }
+@media (min-width: 1180px) {
+  .app:has(.plan-cols .plan-side:not(:empty)) { max-width: 1320px; }
+  .plan-cols { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 16px; align-items: start; }
+  .plan-main { grid-column: 1; grid-row: 1; min-width: 0; }
+  .plan-side { grid-column: 2; grid-row: 1; position: sticky; top: 12px; max-height: calc(100vh - 24px); overflow: auto; }
+  .plan-side .card { margin-bottom: 0; }
+  .plan-side .tw-row { font-size: .9rem; }
+}
+
+/* Destructive actions */
+button.danger { color: var(--err); border-color: var(--err); background: transparent; }
+button.danger:hover:not(:disabled) { background: var(--err-bg); }
+.danger-zone { border-color: var(--err); }
+.zone-title { margin: 24px 0 8px; font-size: 1rem; color: var(--err); }
+button.danger-link { color: var(--err); }

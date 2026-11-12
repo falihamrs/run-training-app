@@ -1,5 +1,5 @@
 // Offline support: network first, falling back to the cache, so updates arrive as soon as you are online.
-const CACHE = 'run-training-planner-v27';
+const CACHE = 'run-training-planner-v28';
 const ASSETS = [
   './',
   './index.html',
@@ -36,6 +36,7 @@ const ASSETS = [
   "./js/core/zones.js",
   "./js/storage.js",
   "./js/ui/history.js",
+  "./js/ui/housekeeping.js",
   "./js/ui/plan.js",
   "./js/ui/settings.js",
   "./js/ui/util.js",

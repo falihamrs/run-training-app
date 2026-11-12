@@ -8,7 +8,7 @@ import { addThresholdEntry, canRemoveEntry, defaultEffectiveFrom, earliestThresh
 import { formatDuration, formatPace, parseDuration, parsePace } from '../core/units.js';
 import { validateSettings } from '../core/validate.js';
 import { COROS_PACE_ZONES, HR_GROUPS, formatHrRange, formatPaceRange, resolveZones } from '../core/zones.js';
-import { clone, esc, getPath, setPath } from './util.js';
+import { clone, esc, fmtDate, fmtDateTime, getPath, setPath } from './util.js';
 
 const TABS = [
   ['race', 'Race'],
@@ -31,7 +31,7 @@ function tabFor(field) {
  * storage: null (no saving possible) or an object with
  * saveSettings, exportBackup, importBackup, requestPersistence, isPersisted.
  */
-export function mountSettings(root, { storage, settings, savedAt = null, today, storageProblem = null, lastExportedAt = null, onRestored = () => {} }) {
+export function mountSettings(root, { storage, settings, savedAt = null, today, storageProblem = null, lastExportedAt = null, onRestored = () => {}, housekeeping = null }) {
   const state = {
     settings: clone(settings),
     saved: JSON.stringify(settings),
@@ -232,21 +232,24 @@ export function mountSettings(root, { storage, settings, savedAt = null, today, 
         <h2>Backup and restore</h2>
         <p class="muted">Your data lives only in this browser. Clearing browser data or switching browsers would erase it, so export a backup now and then. Backups include saved settings (not unsaved edits), plans and run summaries.</p>
         <p><button type="button" data-action="export" ${storage ? '' : 'disabled'}>Export backup</button>
-          <span class="muted small">${state.lastExportedAt ? `Last export: ${esc(String(state.lastExportedAt).slice(0, 10))}` : 'No export yet.'}</span></p>
+          <span class="muted small">${state.lastExportedAt ? `Last export: ${esc(fmtDate(String(state.lastExportedAt).slice(0, 10)))}` : 'No export yet.'}</span></p>
         <label class="field"><span class="lbl">Restore from a backup file</span><input type="file" accept="application/json,.json" data-import="1" ${storage ? '' : 'disabled'}></label>
         <p class="muted">Restoring replaces the saved settings, plans and runs. Uploaded activity streams are not part of a backup; the run summaries are.</p>
         ${state.pending?.kind === 'import' ? `<p class="notice warn">Replace everything in this browser with <strong>${esc(state.pending.name)}</strong>? <button type="button" class="primary" data-action="import-confirm">Yes, restore</button> <button type="button" data-action="pending-cancel">Cancel</button></p>` : ''}
-      </section>
-      <section class="card">
-        <h2>Erase everything</h2>
-        <p class="muted">Deletes settings, plans, runs and streams from this browser. Export a backup first if you might need them.</p>
-        ${state.pending?.kind === 'erase' ? '<p class="notice warn">This cannot be undone. <button type="button" class="primary" data-action="erase-confirm">Yes, erase everything</button> <button type="button" data-action="pending-cancel">Cancel</button></p>' : `<p><button type="button" data-action="erase" ${storage ? '' : 'disabled'}>Erase everything</button></p>`}
       </section>
       <section class="card">
         <h2>Persistent storage</h2>
         <p>${state.persisted ? 'The browser has agreed to keep this data unless you clear it yourself.' : 'The browser may delete this data when disk space is low unless you ask it to keep it.'}</p>
         <p><button type="button" data-action="persist" ${storage && !state.persisted ? '' : 'disabled'}>Keep my data</button></p>
         <div id="notice" aria-live="polite">${n ? `<p class="notice ${n.kind}">${esc(n.text)}</p>` : ''}</div>
+      </section>
+      <div data-hk-slot="data"></div>
+      <h2 class="zone-title">Danger zone</h2>
+      <div data-hk-slot="danger"></div>
+      <section class="card danger-zone">
+        <h2>Erase everything</h2>
+        <p class="muted">Deletes settings, plans, runs and streams from this browser. Export a backup first if you might need them.</p>
+        ${state.pending?.kind === 'erase' ? '<p class="notice warn">This cannot be undone. <button type="button" class="danger" data-action="erase-confirm">Yes, erase everything</button> <button type="button" data-action="pending-cancel">Cancel</button></p>' : `<p><button type="button" class="danger" data-action="erase" ${storage ? '' : 'disabled'}>Erase everything</button></p>`}
       </section>`;
   }
 
@@ -266,6 +269,11 @@ export function mountSettings(root, { storage, settings, savedAt = null, today, 
       </div>
       <footer class="savebar" id="savebar"></footer>`;
     renderSide();
+    if (housekeeping && state.tab === 'backup') {
+      root.querySelector('[data-hk-slot="data"]')?.replaceWith(housekeeping.dataEl);
+      root.querySelector('[data-hk-slot="danger"]')?.replaceWith(housekeeping.dangerEl);
+      housekeeping.onShow?.();
+    }
   }
 
   function renderSide() {
@@ -280,7 +288,7 @@ export function mountSettings(root, { storage, settings, savedAt = null, today, 
     const bar = root.querySelector('#savebar');
     if (bar) {
       const d = dirty();
-      const status = !storage ? 'Saving is not available in this browser.' : d ? 'Unsaved changes' : state.savedAt ? `Saved ${new Date(state.savedAt).toLocaleString()}` : 'Nothing saved yet';
+      const status = !storage ? 'Saving is not available in this browser.' : d ? 'Unsaved changes' : state.savedAt ? `Saved ${fmtDateTime(state.savedAt)}` : 'Nothing saved yet';
       const info = `${state.saveError && d ? '<strong class="err">Not saved</strong> · ' : ''}${esc(status)}${v.errors.length ? ` · <strong>${v.errors.length} error${v.errors.length === 1 ? '' : 's'}</strong> to fix` : ''}`;
       // Update in place: leaving a field fires "change" on the mouse-down of a Save click, and replacing
       // the button then would swallow that click.

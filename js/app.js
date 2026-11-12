@@ -4,6 +4,7 @@ import { addRun, getStream, deletePlan, deleteRuns, deleteStreams, listStreamIds
 import { mountHistory } from './ui/history.js';
 import { mountPlan } from './ui/plan.js';
 import { mountSettings } from './ui/settings.js';
+import { mountHousekeeping } from './ui/housekeeping.js';
 
 const root = document.getElementById('app');
 const today = todayLocal();
@@ -57,7 +58,9 @@ async function start() {
     <div id="page-plan" hidden></div><div id="page-history" hidden></div><div id="page-settings"></div>`;
   const pageEls = { plan: root.querySelector('#page-plan'), history: root.querySelector('#page-history'), settings: root.querySelector('#page-settings') };
   let planUi = { getPlan: () => null };
-  const settingsUi = mountSettings(pageEls.settings, { storage, settings, savedAt, today, storageProblem, lastExportedAt, onRestored: () => location.reload() });
+  let hkUi = null;
+  const hkEls = { dataEl: document.createElement('div'), dangerEl: document.createElement('div') };
+  const settingsUi = mountSettings(pageEls.settings, { storage, settings, savedAt, today, storageProblem, lastExportedAt, onRestored: () => location.reload(), housekeeping: { ...hkEls, onShow: () => hkUi?.refresh() } });
   const historyUi = mountHistory(pageEls.history, {
     storage,
     getSettings: () => settingsUi.currentSettings(),
@@ -70,6 +73,7 @@ async function start() {
     },
     onUseThreshold: (suggestion) => { settingsUi.prefillThreshold(suggestion); show('settings'); },
   });
+  hkUi = mountHousekeeping(hkEls, { storage, getRuns: () => historyUi.getRuns(), getPlan: () => planUi.getPlan(), reloadRuns: () => historyUi.refresh(), onChanged: () => planUi.refresh() });
   planUi = mountPlan(pageEls.plan, {
     storage,
     today,

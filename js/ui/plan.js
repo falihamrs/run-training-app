@@ -10,7 +10,7 @@ import { earliestThreshold, thresholdForDate } from '../core/thresholds.js';
 import { aiReport } from '../core/aiExport.js';
 import { applyChanges, canUndo, editsLostByRegen, lockReason, undoLast } from '../core/edits.js';
 import { applyPlanItems, parseChangeBlock, previewChanges, settingsWith } from '../core/aiChanges.js';
-import { esc } from './util.js';
+import { esc, fmtDate } from './util.js';
 
 const NOTICE_MS = 6000; // how long a success message stays on screen
 const PHASE_LABEL = { base: 'Base', build: 'Build', peak: 'Peak', taper: 'Taper' };
@@ -75,12 +75,26 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
   function headerCard() {
     const p = state.plan;
     if (!p) {
+      const st = getSettings();
+      const raceOk = /^\d{4}-\d{2}-\d{2}$/.test(st.race.date ?? '') && st.race.date > today && Number(st.race.distanceKm) > 0;
+      const trailMode = st.race.mode === 'trail';
+      const thrOk = (st.thresholds ?? []).some((t) => (trailMode ? t.lthr : t.paceSecPerKm) != null);
+      const step = (ok, title, detail, tab, optional) => `<li class="${ok ? 'done' : ''}"><span class="mark" aria-hidden="true">${ok ? '✓' : optional ? '○' : '•'}</span>
+        <span><strong>${title}</strong>${optional ? ' <span class="muted small">(optional)</span>' : ''}<br><span class="muted small">${ok ? 'Done' : detail}</span></span>
+        ${ok ? '' : `<button type="button" class="link" data-go="${tab === 'history' ? 'history' : 'settings'}" ${tab === 'history' ? '' : `data-tab="${tab}"`}>${tab === 'history' ? 'Open History' : 'Open Settings'}</button>`}</li>`;
+      const ready = raceOk && thrOk;
+      const setup = `<ol class="checklist">
+        ${step(raceOk, '1. Choose your race', 'Set the race date and distance (and climbing for trail).', 'race')}
+        ${step(thrOk, `2. Add your ${trailMode ? 'LTHR' : 'threshold pace'}`, 'Add one threshold entry, or upload a 30-minute test.', 'thresholds')}
+        ${step(state.runs.length > 0, '3. Import your recent runs', 'Gives the plan a starting point from what you really run.', 'history', true)}
+      </ol>`;
       return `<section class="card"><h2>Create your plan</h2>
-        <p class="muted">The plan uses the race, schedule and thresholds from Settings and the baseline from History. Save your settings first.</p>
-        ${messagesHtml(state.messages)}
-        ${state.messages.some((m) => m.code === 'entry' && m.level === 'block') && state.messages.filter((m) => m.level === 'block').length === 1 ? '<p class="notice warn">Your recent training is below the usual starting point for this race. You can still build the plan, with a warning, if you accept the extra risk. <button type="button" data-act="generate-override">Generate anyway</button></p>' : ''}
-        <p><button type="button" class="primary" data-act="generate" ${storage ? '' : 'disabled'}>Generate plan</button>
-        <button type="button" class="link" data-go="settings">Open settings</button> <button type="button" class="link" data-go="history">Open history</button></p>
+        <p class="muted">${ready ? 'Everything needed is set. Generate your plan.' : 'Three steps to your first plan.'}</p>
+        ${setup}
+        ${ready ? messagesHtml(state.messages) : ''}
+        ${ready && state.messages.some((m) => m.code === 'entry' && m.level === 'block') && state.messages.filter((m) => m.level === 'block').length === 1 ? '<p class="notice warn">Your recent training is below the usual starting point for this race. You can still build the plan, with a warning, if you accept the extra risk. <button type="button" data-act="generate-override">Generate anyway</button></p>' : ''}
+        <p><button type="button" class="primary" data-act="generate" ${storage && ready ? '' : 'disabled'}>Generate plan</button>
+        ${state.runs.length ? '' : ''}</p>
         ${state.runs.length ? aiExportHtml() : ''}</section>`;
     }
     const trail = p.mode === 'trail';
@@ -89,7 +103,7 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
       ? `${race.distanceKm} km, ${race.elevationGainM} m climbing (${race.kmEffort.toFixed(0)} km-effort). Expected duration ${hm(race.expectedDurationMin[0])} to ${hm(race.expectedDurationMin[1])}.`
       : `${race.distanceKm} km. Predicted time ${formatDuration(Math.round(race.predictedSec * 0.97))} to ${formatDuration(Math.round(race.predictedSec * 1.03))}${p.goalPaceSecPerKm ? `, goal pace ${Math.floor(p.goalPaceSecPerKm / 60)}:${String(p.goalPaceSecPerKm % 60).padStart(2, '0')}/km` : ''}.`;
     const peak = trail ? `Peak ${p.peak.hours} h and ${p.peak.vertM} m a week.` : `Peak ${p.peak.km} km a week.`;
-    return `${''}<section class="card"><h2>${esc(p.mode === 'trail' ? 'Trail' : 'Road')} plan: ${esc(p.startDate)} to ${esc(p.raceDate)} <span class="tag ${p.status === 'WARN' ? 'coros' : ''}">${esc(p.status)}</span></h2>
+    return `${''}<section class="card"><h2>${esc(p.mode === 'trail' ? 'Trail' : 'Road')} plan: ${esc(fmtDate(p.startDate))} to ${esc(fmtDate(p.raceDate))} <span class="tag ${p.status === 'WARN' ? 'coros' : ''}">${esc(p.status)}</span></h2>
       <p>${esc(facts)} ${esc(peak)} ${p.weeks.length} weeks.</p>
       ${notesHtml()}
       ${state.notice ? `<p class="notice ${state.notice.kind}" data-notice role="status">${esc(state.notice.text)}</p>` : ''}
@@ -101,11 +115,11 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
       ${aiExportHtml()}
       <p class="row">
         ${state.confirmRegen
-          ? `<span class="notice warn">Regenerate from ${esc(nextMonday(today))}? Weeks before that stay as they are.${editsLostByRegen(state.plan, nextMonday(today)) ? ` Your ${editsLostByRegen(state.plan, nextMonday(today))} edit${editsLostByRegen(state.plan, nextMonday(today)) === 1 ? '' : 's'} in those weeks will be replaced.` : ''} <button type="button" class="primary" data-act="regen-confirm">Yes, regenerate</button> <button type="button" data-act="cancel-regen">Cancel</button></span>`
+          ? `<span class="notice warn">Regenerate from ${esc(fmtDate(nextMonday(today), 'day'))}? Weeks before that stay as they are.${editsLostByRegen(state.plan, nextMonday(today)) ? ` Your ${editsLostByRegen(state.plan, nextMonday(today))} edit${editsLostByRegen(state.plan, nextMonday(today)) === 1 ? '' : 's'} in those weeks will be replaced.` : ''} <button type="button" class="primary" data-act="regen-confirm">Yes, regenerate</button> <button type="button" data-act="cancel-regen">Cancel</button></span>`
           : '<button type="button" data-act="regen">Regenerate from next Monday</button>'}
         ${state.confirmNew
-          ? '<span class="notice warn">Discard this plan and start a new one? Matched runs keep their record. <button type="button" class="primary" data-act="generate">Yes, start over</button> <button type="button" data-act="cancel-regen">Cancel</button></span>'
-          : '<button type="button" data-act="new">Start a new plan</button>'}
+          ? '<span class="notice warn">Discard this plan and start a new one? Matched runs keep their record. <button type="button" class="danger" data-act="generate">Yes, start over</button> <button type="button" data-act="cancel-regen">Cancel</button></span>'
+          : '<button type="button" class="danger" data-act="new">Start a new plan</button>'}
       </p>
       ${adviceHtml()}</section>`;
   }
@@ -155,7 +169,7 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
       const res = testResultFromRun(run);
       const applied = s.thresholds.some((e) => e.source === 'test' && e.effectiveFrom > tw.date);
       if (!applied && (res.paceSecPerKm || res.lthr)) {
-        parts.push(`<div class="notice ok"><strong>Test result (${esc(tw.date)}):</strong> ${res.paceSecPerKm ? `pace ${clock(res.paceSecPerKm)} /km` : ''}${res.paceSecPerKm && res.lthr ? ', ' : ''}${res.lthr ? `LTHR ${res.lthr} bpm` : ''}.
+        parts.push(`<div class="notice ok"><strong>Test result (${esc(fmtDate(tw.date))}):</strong> ${res.paceSecPerKm ? `pace ${clock(res.paceSecPerKm)} /km` : ''}${res.paceSecPerKm && res.lthr ? ', ' : ''}${res.lthr ? `LTHR ${res.lthr} bpm` : ''}.
           <button type="button" class="primary" data-sg="use-test" data-lthr="${res.lthr ?? ''}" data-pace="${res.paceSecPerKm ?? ''}">Review and add</button></div>`);
       }
     }
@@ -227,7 +241,7 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
       ${a?.error ? `<p class="notice error">${esc(a.error)}</p>` : ''}
       ${items.length ? `<p class="small">${esc(a.source)}: ${items.filter((x) => x.status === 'ok').length} change${items.filter((x) => x.status === 'ok').length === 1 ? '' : 's'} can be applied, ${items.filter((x) => x.status === 'refused').length} refused${items.some((x) => x.status === 'suggestion') ? ', 1 threshold suggestion' : ''}.</p>
         <ul class="ai-items">${items.map(row).join('')}</ul>
-        ${hasSetting ? `<p class="notice warn small">Setting changes are saved in Settings and rebuild the plan from ${esc(nextMonday(today))}.${lost ? ` Your ${lost} edit${lost === 1 ? '' : 's'} in those weeks will be replaced.` : ''} The plan changes are applied after that, where their workout still exists. Undo restores the plan, but the settings stay changed.</p>` : ''}
+        ${hasSetting ? `<p class="notice warn small">Setting changes are saved in Settings and rebuild the plan from ${esc(fmtDate(nextMonday(today), 'day'))}.${lost ? ` Your ${lost} edit${lost === 1 ? '' : 's'} in those weeks will be replaced.` : ''} The plan changes are applied after that, where their workout still exists. Undo restores the plan, but the settings stay changed.</p>` : ''}
         <p class="row"><button type="button" class="primary" data-act="ai-apply" ${a.checked.size ? '' : 'disabled'}>Apply selected</button> <button type="button" data-act="ai-discard">Discard</button></p>` : ''}
       ${a?.result ? `<p class="notice ${a.result.kind}" role="status">${esc(a.result.text)}</p>` : ''}
     </details>`;
@@ -385,7 +399,7 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
     }).join('');
     const hint = state.pick && state.plan.weeks.find((x) => x.workouts.some((w) => w.id === state.pick))?.n === week.n
       ? '<p class="small" role="status">Now press the day to move it to, or a session to swap with. Press Escape to cancel.</p>'
-      : '<p class="muted small">Drag a session to another day to move it, or onto another session to swap them. On a phone, tap a session, then tap the day.</p>';
+      : '';
     return `<div class="daystrip" role="group" aria-label="Week ${week.n} days">${cells}</div>${hint}`;
   }
 
@@ -428,7 +442,7 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
     const anyCurrent = state.plan.weeks.some((x) => diffDays(x.start, today) >= 0 && diffDays(x.start, today) < 7);
     const open = state.open.has(week.n) || ((isCurrent || (!anyCurrent && week.n === 1)) && !state.open.has(-week.n));
     return `<details class="week${isCurrent ? ' current' : ''}" data-week="${week.n}" ${open ? 'open' : ''}>
-      <summary><strong>Week ${week.n}</strong> · ${esc(week.start)} · ${PHASE_LABEL[week.phase]}${week.kind === 'down' ? ' (down week)' : ''} · target ${target} · planned ${planned}${progTxt}${week.locked ? ' · locked' : ''}${isCurrent ? ' <span class="tag">this week</span>' : ''}</summary>
+      <summary><strong>Week ${week.n}</strong> · ${esc(fmtDate(week.start, 'day'))} · ${PHASE_LABEL[week.phase]}${week.kind === 'down' ? ' (down week)' : ''} · target ${target} · planned ${planned}${progTxt}${week.locked ? ' · locked' : ''}${isCurrent ? ' <span class="tag">this week</span>' : ''}</summary>
       <p class="muted small">${esc(week.reason)}</p>
       ${week.flags.map((f) => `<p class="notice warn small">${esc(f)}</p>`).join('')}
       <p><button type="button" class="link" data-copy-week="${week.n}">Copy this week as text</button></p>
@@ -454,8 +468,7 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
     const rows = DAYS.map((d, i) => {
       const date = addDays(week.start, i);
       const ws = week.workouts.filter((w) => w.date === date);
-      const dm = new Date(date + 'T00:00:00Z');
-      const label = `${d} ${dm.getUTCDate()}/${dm.getUTCMonth() + 1}`;
+      const label = fmtDate(date, 'day');
       if (!ws.length) return `<li class="tw-row muted${date === today ? ' today' : ''}"><span class="tw-day">${label}</span> Rest</li>`;
       return ws.map((w) => {
         const run = byWorkout.get(w.id) ?? null;
@@ -495,7 +508,7 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
       const y = (v) => T + H - (v / top) * H;
       const bars = rows.map((r, i) => {
         const x = L + i * bw;
-        const tip = `Week ${r.n} (${r.start}), ${PHASE_LABEL[r.phase]}${r.down ? ', down week' : ''}: planned ${fmt(r[key])}${r[doneKey] != null ? `, done ${fmt(r[doneKey])}` : ''}`;
+        const tip = `Week ${r.n} (${fmtDate(r.start, 'day')}), ${PHASE_LABEL[r.phase]}${r.down ? ', down week' : ''}: planned ${fmt(r[key])}${r[doneKey] != null ? `, done ${fmt(r[doneKey])}` : ''}`;
         const w = Math.max(1, bw - 2);
         return `<g class="ov-week${r.current ? ' now' : ''}" data-open-week="${r.n}" tabindex="0" role="button" aria-label="${esc(tip)}">
           <title>${esc(tip)}</title>
@@ -523,13 +536,13 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
     const charts = trail
       ? `<p class="small muted">Hours per week</p>${chart('hours', 'doneHours', 'Hours', h)}<p class="small muted">Climbing per week (m)</p>${chart('vert', 'doneVert', 'Climbing', m)}`
       : `<p class="small muted">Kilometres per week</p>${chart('km', 'doneKm', 'Kilometres', k)}`;
-    const table = `<details class="ov-table"><summary class="small">Show as table</summary><table><thead><tr><th>Week</th><th>Starts</th><th>Phase</th><th>Planned</th><th>Done</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${r.n}${r.down ? ' (down)' : ''}</td><td>${esc(r.start)}</td><td>${PHASE_LABEL[r.phase]}</td><td>${trail ? `${h(r.hours)} · ${m(r.vert)}` : k(r.km)}</td><td>${r.doneHours == null && r.doneKm == null ? '' : trail ? `${h(r.doneHours)} · ${m(r.doneVert)}` : k(r.doneKm)}</td></tr>`).join('')}</tbody></table></details>`;
+    const table = `<details class="ov-table"><summary class="small">Show as table</summary><table><thead><tr><th>Week</th><th>Starts</th><th>Phase</th><th>Planned</th><th>Done</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${r.n}${r.down ? ' (down)' : ''}</td><td>${esc(fmtDate(r.start, 'day'))}</td><td>${PHASE_LABEL[r.phase]}</td><td>${trail ? `${h(r.hours)} · ${m(r.vert)}` : k(r.km)}</td><td>${r.doneHours == null && r.doneKm == null ? '' : trail ? `${h(r.doneHours)} · ${m(r.doneVert)}` : k(r.doneKm)}</td></tr>`).join('')}</tbody></table></details>`;
     return `<section class="card overview"><h2>Plan overview</h2>
       <p class="small"><span class="ov-key plan"></span> Planned <span class="ov-key done"></span> Done <span class="ov-key now"></span> This week. Select a week to open it.</p>${charts}${table}</section>`;
   }
 
   function render() {
-    el.innerHTML = `${bannersHtml()}${state.plan ? thisWeekHtml() : ''}${headerCard()}${state.plan ? overviewHtml() : ''}${state.plan ? aiFeedbackHtml() : ''}${state.plan ? suggestionsHtml() : ''}${state.plan ? state.plan.weeks.map(weekHtml).join('') : ''}`;
+    el.innerHTML = `${bannersHtml()}<div class="plan-cols"><aside class="plan-side">${state.plan ? thisWeekHtml() : ''}</aside><div class="plan-main">${headerCard()}${state.plan ? overviewHtml() : ''}${state.plan ? aiFeedbackHtml() : ''}${state.plan ? suggestionsHtml() : ''}${state.plan ? '<p class="muted small weeks-hint">In each week, drag a session to another day to move it, or onto another session to swap. Without a mouse: press a session, then the day.</p>' + state.plan.weeks.map(weekHtml).join('') : ''}</div></div>`;
     const n = state.notice;
     if (n && n.kind === 'ok' && !n.timer) {
       n.timer = setTimeout(() => {

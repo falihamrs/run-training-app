@@ -161,7 +161,7 @@ edits it will replace.
 
 **Changing the schedule of a week.** Every open week has a strip of its seven days. Drag a session onto
 another day to move it, or onto another session to swap the two (a run swaps with a run, strength with
-strength). On a phone or with the keyboard, press a session, then press the day or session to move it to;
+strength). Without a mouse (keyboard, touch), press a session, then press the day or session to move it to;
 Escape cancels. Sessions can only move within their own week. Days in the past, the race day, locked weeks
 and sessions with a matched run are not drop targets. A swap or move follows the same checks as the Edit
 form, and a climbing session that lands on a flat day gets a warning (an AI change is refused). Swaps are
@@ -174,6 +174,16 @@ what you actually ran, and the week's target against what is done. "Open week N 
 **Plan overview.** Below the plan header, a bar chart per week: planned (light), done (solid), the current
 week shaded, phases underneath. Trail plans get two charts (hours, climbing), road plans one (km). Select a
 week to open it; "Show as table" gives the same numbers as text.
+
+**First run.** Until a plan exists, the Plan page shows a three-step checklist (race, threshold, optional runs)
+with a link to the right Settings tab; Generate plan unlocks when the first two are done.
+
+**Layout and dates.** On screens 1180 px wide or more, the This week card sits beside the plan and weeks.
+Dates are shown as `16 Nov 2026` (or `Mon 16 Nov` inside a week); stored data, CSV and the AI report stay ISO.
+
+**Housekeeping and destructive actions.** Storage use, the data check and Delete old runs live in
+Settings > Backup, below a "Danger zone" heading together with Erase everything. Destructive buttons
+(Start a new plan, Delete, Erase) are outlined in red.
 
 **Notices.** Warnings and info about the plan (below-baseline start, climbing that cannot be placed, and so
 on) sit in one collapsible "Plan notes" block, open after you generate a plan and closed after that. The
