@@ -167,6 +167,10 @@ and sessions with a matched run are not drop targets. A swap or move follows the
 form, and a climbing session that lands on a flat day gets a warning (an AI change is refused). Swaps are
 saved and undone as one step. An AI can ask for one with `{ "op": "swap", "workout": "w6-Tue", "with": "w6-Thu" }`.
 
+**This week.** The top of the Plan page is a card for the current week (or the first week before the plan
+starts): one row per day with the session, planned length and climbing, today highlighted, done/missed tags,
+what you actually ran, and the week's target against what is done. "Open week N to edit" jumps to the full week.
+
 **Notices.** Warnings and info about the plan (below-baseline start, climbing that cannot be placed, and so
 on) sit in one collapsible "Plan notes" block, open after you generate a plan and closed after that. The
 race duration is shown once, in the plan header. "Saved" style messages fade after about six seconds.

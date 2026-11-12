@@ -439,8 +439,41 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
     </details>`;
   }
 
+  /** Compact card for the current week (or the first one when the plan has not started): one row per day. */
+  function thisWeekHtml() {
+    const weeks = state.plan.weeks;
+    const week = weeks.find((x) => diffDays(x.start, today) >= 0 && diffDays(x.start, today) < 7) ?? (diffDays(weeks[0].start, today) < 0 ? weeks[0] : null);
+    if (!week) return '';
+    const trail = state.plan.mode === 'trail';
+    const started = diffDays(week.start, today) >= 0;
+    const byWorkout = runsByWorkout(state.runs);
+    const prog = weekProgress(week, state.runs, today, state.plan.mode);
+    const target = trail ? `${week.targetHours} h · ${week.targetVertM} m` : `${week.targetKm} km`;
+    const done = trail ? `${(prog.actualMin / 60).toFixed(1)} h · ${Math.round(prog.actualVertM)} m` : `${prog.actualKm.toFixed(1)} km`;
+    const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    const rows = DAYS.map((d, i) => {
+      const date = addDays(week.start, i);
+      const ws = week.workouts.filter((w) => w.date === date);
+      const dm = new Date(date + 'T00:00:00Z');
+      const label = `${d} ${dm.getUTCDate()}/${dm.getUTCMonth() + 1}`;
+      if (!ws.length) return `<li class="tw-row muted${date === today ? ' today' : ''}"><span class="tw-day">${label}</span> Rest</li>`;
+      return ws.map((w) => {
+        const run = byWorkout.get(w.id) ?? null;
+        const st = w.code === 'RACE' && !run && w.date >= today ? 'upcoming' : workoutStatus(w, run, today);
+        const tag = { done: '<span class="tag">done</span>', missed: '<span class="tag coros">missed</span>', today: '<span class="tag">today</span>' }[st] ?? '';
+        const plan = `${w.plannedMin} min${w.plannedVertM ? ` · ${w.plannedVertM} m` : ''}`;
+        const act = run ? `<span class="small ok">${run.distanceKm.toFixed(1)} km, ${Math.round(run.movingSec / 60)} min${run.gainM ? `, ${Math.round(run.gainM)} m` : ''}</span>` : '';
+        return `<li class="tw-row${w.date === today ? ' today' : ''}${st === 'missed' ? ' missed' : ''}"><span class="tw-day">${label}</span> <span class="code">${esc(w.code)}</span> ${esc(w.name)} <span class="muted small">${plan}</span> ${tag} ${act}</li>`;
+      }).join('');
+    }).join('');
+    return `<section class="card this-week"><h2>${started ? 'This week' : 'First week'} <span class="muted small">Week ${week.n} · ${PHASE_LABEL[week.phase]}${week.kind === 'down' ? ' (down week)' : ''}</span></h2>
+      <p class="small">Target ${target}${started ? ` · done ${done}${prog.ratio != null ? ` (${Math.round(prog.ratio * 100)}%)` : ''}` : ''}</p>
+      <ul class="tw-list">${rows}</ul>
+      <p><button type="button" class="link" data-open-week="${week.n}">Open week ${week.n} to edit</button></p></section>`;
+  }
+
   function render() {
-    el.innerHTML = `${bannersHtml()}${headerCard()}${state.plan ? aiFeedbackHtml() : ''}${state.plan ? suggestionsHtml() : ''}${state.plan ? state.plan.weeks.map(weekHtml).join('') : ''}`;
+    el.innerHTML = `${bannersHtml()}${state.plan ? thisWeekHtml() : ''}${headerCard()}${state.plan ? aiFeedbackHtml() : ''}${state.plan ? suggestionsHtml() : ''}${state.plan ? state.plan.weeks.map(weekHtml).join('') : ''}`;
     const n = state.notice;
     if (n && n.kind === 'ok' && !n.timer) {
       n.timer = setTimeout(() => {
@@ -551,6 +584,17 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
     const n = Number(d.dataset.week);
     if (d.open) { state.open.add(n); state.open.delete(-n); } else { state.open.delete(n); state.open.add(-n); }
   }, true);
+
+  el.addEventListener('click', (e) => {
+    const ow = e.target.closest?.('[data-open-week]');
+    if (!ow) return;
+    const n = Number(ow.dataset.openWeek);
+    state.open.add(n); state.open.delete(-n);
+    render();
+    const d = el.querySelector(`details[data-week="${n}"]`);
+    d?.scrollIntoView({ block: 'start' });
+    d?.querySelector('summary')?.focus();
+  });
 
   // drag and drop (mouse) and tap-to-pick (touch, keyboard) on the week strip
   el.addEventListener('dragstart', (e) => {

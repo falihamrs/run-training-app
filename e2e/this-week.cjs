@@ -1,0 +1,41 @@
+// Optional browser check: the "This week" card at the top of the Plan page (rows, today, done/missed, open week).
+const { chromium } = require('playwright');
+const fx = require('./fixtures.cjs');
+(async () => {
+  const browser = await chromium.launch();
+  const page = await (await browser.newContext({ viewport: { width: 1100, height: 1000 }, timezoneId: 'Asia/Bangkok' })).newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.clock.install({ time: new Date('2026-11-11T08:00:00+07:00') });
+  await page.goto('http://localhost:8080/index.html#settings');
+  await page.waitForSelector('.tabs');
+  await page.selectOption('[data-path="race.mode"]', 'road');
+  await page.fill('[data-path="race.date"]', '2027-03-07'); await page.fill('[data-path="race.distanceKm"]', '21.1');
+  await page.click('[data-tab="thresholds"]'); await page.fill('[data-draft="lthr"]', '171'); await page.fill('[data-draft="pace"]', '6:26');
+  await page.click('[data-action="add-threshold"]'); await page.click('[data-action="save"]'); await page.waitForTimeout(300);
+  await page.click('[data-page="history"]');
+  await page.setInputFiles('#hist-files', fx.all());
+  await page.waitForFunction(() => document.querySelectorAll('.results li').length >= 11, null, { timeout: 60000 }); await page.waitForTimeout(500);
+  await page.click('[data-page="plan"]'); await page.click('[data-act="generate"]'); await page.waitForTimeout(1200);
+  if (await page.locator('[data-act="generate-override"]').count()) { await page.click('[data-act="generate-override"]'); await page.waitForTimeout(1200); }
+  const out = {};
+  await page.waitForSelector('.this-week');
+  out.title = (await page.locator('.this-week h2').textContent()).replace(/\s+/g, ' ').trim();
+  out.rows = await page.locator('.this-week .tw-row').count();
+  out.today = await page.locator('.this-week .tw-row.today').count();
+  out.index = await page.evaluate(() => [...document.querySelectorAll('section.card')].findIndex((n) => n.classList.contains('this-week')));
+  out.openBefore = await page.locator('details.week[open]').count();
+  await page.screenshot({ path: '/tmp/shots/this_week.png' });
+  out.beforeStart = out.title;
+  await page.clock.setFixedTime(new Date('2026-11-18T08:00:00+07:00')); await page.reload(); await page.waitForSelector('.this-week');
+  out.title = (await page.locator('.this-week h2').textContent()).replace(/\s+/g, ' ').trim();
+  out.today = await page.locator('.this-week .tw-row.today').count();
+  out.tags = await page.locator('.this-week .tw-row .tag').allTextContents();
+  await page.screenshot({ path: '/tmp/shots/this_week2.png' });
+  await page.click('[data-open-week]');
+  out.focused = await page.evaluate(() => document.activeElement?.tagName);
+  console.log(JSON.stringify(out), errors);
+  await browser.close();
+  const ok = out.rows >= 7 && out.today >= 1 && out.beforeStart.startsWith('First week') && out.title.startsWith('This week') && !errors.length;
+  console.log(ok ? 'PASS' : 'FAIL'); process.exit(ok ? 0 : 1);
+})();

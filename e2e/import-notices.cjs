@@ -40,7 +40,7 @@ const fs = require('fs');
   // --- Plan: notes block and the fading message (all days flat on purpose: the two climbing notices used to repeat)
   await page.click('[data-page="plan"]'); await page.click('[data-act="generate"]'); await page.waitForTimeout(1500);
   if (await page.locator('[data-act="generate-override"]').count()) { await page.click('[data-act="generate-override"]'); await page.waitForTimeout(1500); }
-  const card = (await page.locator('section.card').first().textContent()).replace(/\s+/g, ' ');
+  const card = (await page.locator('section.card:has(details.plan-notes)').first().textContent()).replace(/\s+/g, ' ');
   out.plan = {
     notesBlocks: await page.locator('details.plan-notes').count(),
     openAfterGenerate: await page.locator('details.plan-notes[open]').count(),
