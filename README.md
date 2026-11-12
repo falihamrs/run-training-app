@@ -185,6 +185,12 @@ Dates are shown as `16 Nov 2026` (or `Mon 16 Nov` inside a week); stored data, C
 Settings > Backup, below a "Danger zone" heading together with Erase everything. Destructive buttons
 (Start a new plan, Delete, Erase) are outlined in red.
 
+**Export ranges.** Under the plan header, "Files" has a range (Whole plan, Last 4 weeks and next 4, or Custom
+dates with From/To) used by Plan CSV, Planned vs actual CSV and Copy as text; the AI report has its own range
+with the same three choices. Planned vs actual CSV has one row per planned workout with the matched run
+(distance, time, pace, HR, climb, differences) and one row per run that matches no workout, sorted by date.
+File names carry the dates when a range is used.
+
 **Notices.** Warnings and info about the plan (below-baseline start, climbing that cannot be placed, and so
 on) sit in one collapsible "Plan notes" block, open after you generate a plan and closed after that. The
 race duration is shown once, in the plan header. "Saved" style messages fade after about six seconds.

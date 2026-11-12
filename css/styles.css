@@ -168,3 +168,5 @@ button.danger:hover:not(:disabled) { background: var(--err-bg); }
 .danger-zone { border-color: var(--err); }
 .zone-title { margin: 24px 0 8px; font-size: 1rem; color: var(--err); }
 button.danger-link { color: var(--err); }
+[data-file-range], [data-ai-range] { width: auto; max-width: 100%; }
+.row label { display: inline-flex; gap: .4rem; align-items: center; }

@@ -8,6 +8,8 @@ import { formatDuration } from '../core/units.js';
 import { canInsertTest, climbTrend, goalAdvice, insertTest, nextWorkoutDate, suggestThresholdUpdate, testResultFromRun } from '../core/suggest.js';
 import { earliestThreshold, thresholdForDate } from '../core/thresholds.js';
 import { aiReport } from '../core/aiExport.js';
+import { actualCsv, resolveRange } from '../core/exportRange.js';
+import { clipWeeks, rangeLabel } from '../core/rangeUtil.js';
 import { applyChanges, canUndo, editsLostByRegen, lockReason, undoLast } from '../core/edits.js';
 import { applyPlanItems, parseChangeBlock, previewChanges, settingsWith } from '../core/aiChanges.js';
 import { esc, fmtDate } from './util.js';
@@ -35,7 +37,7 @@ async function copyText(text) {
 }
 
 export function mountPlan(el, { storage, today, getSettings, getHistory, goto, onUseThreshold = () => {}, isSettingsDirty = () => false, getBackupInfo = async () => null, applySettings = null }) {
-  const state = { plan: null, messages: [], loaded: false, notice: null, confirmRegen: false, confirmNew: false, open: new Set(), runs: [], suggestState: {}, backup: null, editing: null, editMsg: null, ai: null, pick: null, notesOpen: false };
+  const state = { plan: null, messages: [], loaded: false, notice: null, confirmRegen: false, confirmNew: false, open: new Set(), runs: [], suggestState: {}, backup: null, editing: null, editMsg: null, ai: null, pick: null, notesOpen: false, fileRange: 'all', expFrom: '', expTo: '' };
 
   const ctx = () => {
     const s = getSettings();
@@ -107,11 +109,7 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
       <p>${esc(facts)} ${esc(peak)} ${p.weeks.length} weeks.</p>
       ${notesHtml()}
       ${state.notice ? `<p class="notice ${state.notice.kind}" data-notice role="status">${esc(state.notice.text)}</p>` : ''}
-      <p class="row">
-        <button type="button" data-act="csv">Download CSV</button>
-        <button type="button" data-act="copy-plan">Copy all weeks as text</button>
-        ${canUndo(state.plan) ? `<button type="button" data-act="undo" title="${esc(state.plan.undo.at(-1).label)}">Undo last change</button>` : ''}
-      </p>
+      ${fileExportHtml()}
       ${aiExportHtml()}
       <p class="row">
         ${state.confirmRegen
@@ -124,15 +122,41 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
       ${adviceHtml()}</section>`;
   }
 
+  const RANGE_OPTS = [['all', 'Whole plan'], ['recent', 'Last 4 weeks and next 4'], ['custom', 'Custom dates']];
+  const rangeSelect = (attr, value) => `<select ${attr} aria-label="Range">${RANGE_OPTS.map(([v, t]) => `<option value="${v}" ${v === value ? 'selected' : ''}>${t}</option>`).join('')}</select>`;
+
+  function customDatesHtml() {
+    if (state.fileRange !== 'custom' && state.aiRange !== 'custom') return '';
+    const p = state.plan;
+    return `<p class="row small" role="group" aria-label="Custom dates for exports">Custom dates:
+      <label>From <input type="date" data-exp="from" value="${esc(state.expFrom)}" min="${esc(p.startDate)}" max="${esc(p.raceDate)}"></label>
+      <label>To <input type="date" data-exp="to" value="${esc(state.expTo)}" min="${esc(p.startDate)}" max="${esc(p.raceDate)}"></label>
+      <span class="muted">Leave one empty for no limit. Used by the exports set to Custom dates.</span></p>`;
+  }
+
+  function fileExportHtml() {
+    return `<div class="row" role="group" aria-label="Export files"><strong>Files:</strong>
+        ${rangeSelect('data-file-range', state.fileRange)}
+        <button type="button" data-act="csv">Plan CSV</button>
+        <button type="button" data-act="actual-csv" title="One row per planned workout with the matched run, plus unplanned runs">Planned vs actual CSV</button>
+        <button type="button" data-act="copy-plan">Copy as text</button>
+        ${canUndo(state.plan) ? `<button type="button" data-act="undo" title="${esc(state.plan.undo.at(-1).label)}">Undo last change</button>` : ''}</div>
+      ${customDatesHtml()}`;
+  }
+
+  const customRange = () => ({ from: state.expFrom, to: state.expTo });
+  const fileRange = () => resolveRange(state.plan, today, state.fileRange, customRange());
+  const suffix = (r) => (r ? `-${r.from ?? 'start'}_${r.to ?? 'end'}` : '');
+
   function aiExportHtml() {
     return `<div class="row" role="group" aria-label="Export for an AI chat"><strong>For an AI chat:</strong>
-      <select data-ai-range aria-label="Weeks to include"><option value="recent" ${state.aiRange === 'all' ? '' : 'selected'}>Last 4 weeks and next 4</option><option value="all" ${state.aiRange === 'all' ? 'selected' : ''}>Whole plan</option></select>
+      ${rangeSelect('data-ai-range', state.aiRange ?? 'recent')}
       <button type="button" data-act="ai-copy">Copy report</button> <button type="button" data-act="ai-download">Download .md</button></div>`;
   }
 
   async function aiText() {
     const history = getHistory ? await getHistory().catch(() => null) : null;
-    return aiReport({ plan: state.plan, runs: state.runs, settings: getSettings(), today, range: state.aiRange ?? 'recent', advice: state.plan ? planAdvice(state.plan, state.runs, today) : [], history });
+    return aiReport({ plan: state.plan, runs: state.runs, settings: getSettings(), today, range: state.aiRange === 'custom' ? (resolveRange(state.plan, today, 'custom', customRange()) ?? 'all') : state.aiRange ?? 'recent', advice: state.plan ? planAdvice(state.plan, state.runs, today) : [], history });
   }
 
   function adviceHtml() {
@@ -625,7 +649,9 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
   }
 
   el.addEventListener('change', (e) => {
-    if (e.target.dataset?.aiRange != null) state.aiRange = e.target.value === 'all' ? 'all' : 'recent';
+    if (e.target.dataset?.aiRange != null) { state.aiRange = ['all', 'custom'].includes(e.target.value) ? e.target.value : 'recent'; return render(); }
+    if (e.target.dataset?.fileRange != null) { state.fileRange = ['recent', 'custom'].includes(e.target.value) ? e.target.value : 'all'; return render(); }
+    if (e.target.dataset?.exp) { state['exp' + (e.target.dataset.exp === 'from' ? 'From' : 'To')] = e.target.value; return; }
     if (e.target.dataset?.aiItem != null) {
       const i = Number(e.target.dataset.aiItem);
       if (e.target.checked) state.ai.checked.add(i); else state.ai.checked.delete(i);
@@ -798,10 +824,22 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
     if (act === 'new') { state.confirmNew = true; state.confirmRegen = false; return render(); }
     if (act === 'cancel-regen') { state.confirmRegen = false; state.confirmNew = false; return render(); }
     if (act === 'csv') {
-      const blob = new Blob([planCsv(state.plan, ctx())], { type: 'text/csv' });
+      const range = fileRange();
+      const blob = new Blob([planCsv(state.plan, ctx(), range)], { type: 'text/csv' });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = `run-plan-${state.plan.raceDate}.csv`;
+      a.download = `run-plan-${state.plan.raceDate}${suffix(range)}.csv`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+      return;
+    }
+    if (act === 'actual-csv') {
+      await refreshRuns();
+      const range = fileRange();
+      const blob = new Blob([actualCsv(state.plan, state.runs, { today, mode: state.plan.mode, range })], { type: 'text/csv' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `planned-vs-actual-${state.plan.raceDate}${suffix(range)}.csv`;
       a.click();
       setTimeout(() => URL.revokeObjectURL(a.href), 1000);
       return;
@@ -831,7 +869,7 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
       setTimeout(() => URL.revokeObjectURL(a.href), 1000);
       return;
     }
-    if (act === 'copy-plan') return flash(await copyText(state.plan.weeks.map((w) => weekText(w, ctx())).join('\n\n\n')), 'The whole plan');
+    if (act === 'copy-plan') return flash(await copyText(clipWeeks(state.plan.weeks, fileRange()).map((w) => weekText(w, ctx())).join('\n\n\n')), fileRange() ? `The plan for ${rangeLabel(fileRange())}` : 'The whole plan');
     if (b.dataset.copyWorkout) {
       const [w, week] = findWorkout(b.dataset.copyWorkout);
       return flash(await copyText(workoutText(w, ctx(), week)), 'The workout');

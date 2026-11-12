@@ -3,6 +3,7 @@
 import { WEEKDAYS } from './dates.js';
 import { resolveTargets } from './targets.js';
 import { formatPace } from './units.js';
+import { clipWeeks } from './rangeUtil.js';
 
 const dur = (p) => {
   if (p.durationSec != null) return p.durationSec >= 60 && p.durationSec % 60 === 0 ? `${p.durationSec / 60} min` : `${p.durationSec} s`;
@@ -94,10 +95,10 @@ const csvCell = (v) => {
 };
 
 /** One row per workout: date, week, phase, code, step list, total km and minutes. */
-export function planCsv(plan, ctx) {
+export function planCsv(plan, ctx, range = null) {
   const trail = ctx.mode === 'trail';
   const rows = [['date', 'weekday', 'week', 'phase', 'code', 'name', 'steps', 'total_km', 'total_min', 'climb_m']];
-  for (const week of plan.weeks) {
+  for (const week of clipWeeks(plan.weeks, range)) {
     for (const w of week.workouts) {
       const steps = w.code === 'RACE' ? 'Race' : stepLines(resolveTargets(w, ctx).steps, { trail }).join(' | ');
       rows.push([w.date, w.weekday, week.n, week.phase, w.code, w.name, steps, trail ? '' : w.plannedKm ?? '', w.plannedMin, w.plannedVertM || '']);

@@ -2,6 +2,7 @@
 // It carries the context an AI needs to judge the plan: race, thresholds, zones, schedule, then each
 // week with planned versus done, and each workout with the run matched to it.
 import { addDays, diffDays, weekdayOf } from './dates.js';
+import { clipWeeks, inRange, rangeLabel } from './rangeUtil.js';
 import { stepLines } from './export.js';
 import { resolveTargets } from './targets.js';
 import { earliestThreshold, sortThresholds, thresholdForDate } from './thresholds.js';
@@ -20,6 +21,7 @@ const cell = (v) => String(v ?? '').replace(/\|/g, '/').replace(/\n/g, ' ');
 export function weeksInRange(plan, today, range = 'recent') {
   if (!plan) return [];
   if (range === 'all') return plan.weeks;
+  if (typeof range === 'object') return clipWeeks(plan.weeks, range);
   const ws = plan.weeks;
   let cur = ws.findIndex((w) => w.start <= today && today <= addDays(w.start, 6));
   if (cur < 0) cur = today < ws[0].start ? -1 : ws.length; // before the plan, or after it
@@ -93,11 +95,13 @@ function workoutBlock(w, ctx, run, today, seen = new Set()) {
  * @param {object[]} o.runs
  * @param {object} o.settings saved settings
  * @param {string} o.today YYYY-MM-DD
- * @param {'recent'|'all'} [o.range]
+ * @param {'recent'|'all'|{from:string|null,to:string|null}} [o.range] a preset or custom dates
  * @param {{text:string}[]} [o.advice] the app's current advice for the plan
  * @param {object|null} [o.history] the History summary (baseline)
  */
-export function aiReport({ plan, runs, settings, today, range = 'recent', advice = [], history = null }) {
+export function aiReport({ plan, runs: allRuns, settings, today, range = 'recent', advice = [], history = null }) {
+  const custom = typeof range === 'object' && range !== null;
+  const runs = custom ? allRuns.filter((r) => inRange(r.date, range)) : allRuns;
   const mode = plan?.mode ?? settings.race.mode;
   const trail = mode === 'trail';
   const ctx = { thresholds: settings.thresholds, coros: settings.corosZones, mode, goalPaceSecPerKm: plan?.goalPaceSecPerKm ?? null };
@@ -105,7 +109,7 @@ export function aiReport({ plan, runs, settings, today, range = 'recent', advice
   const race = settings.race;
   L.push('# Running training report');
   L.push('');
-  L.push(`Exported ${today} from Run Training Planner. ${range === 'all' ? 'Whole plan.' : 'The last 4 finished weeks, the current week and the next 4 weeks.'}`);
+  L.push(`Exported ${today} from Run Training Planner. ${custom ? `Only ${rangeLabel(range)} (week totals count just those days).` : range === 'all' ? 'Whole plan.' : 'The last 4 finished weeks, the current week and the next 4 weeks.'}`);
   L.push('Please review how my training is going against the plan and whether the upcoming weeks should change. Paces and heart rates come from my watch files; "typed in by hand" climbing is from a treadmill or a corrected reading.');
   L.push('');
 
@@ -209,7 +213,7 @@ export function aiReport({ plan, runs, settings, today, range = 'recent', advice
   }
 
   // runs before the plan (or all runs when there is no plan) in the last 8 weeks
-  const firstDay = plan?.weeks.length ? (range === 'all' ? plan.weeks[0].start : weeks[0]?.start ?? plan.weeks[0].start) : null;
+  const firstDay = plan?.weeks.length ? (range === 'all' ? plan.weeks[0].start : custom ? range.from ?? weeks[0]?.start ?? plan.weeks[0].start : weeks[0]?.start ?? plan.weeks[0].start) : null;
   const since = addDays(today, -56);
   const before = runs.filter((r) => r.date >= since && r.date <= today && (!firstDay || r.date < firstDay) && !shown.has(r)).sort((a, b) => (a.date < b.date ? -1 : 1));
   if (before.length) {
