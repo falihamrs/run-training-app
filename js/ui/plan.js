@@ -472,8 +472,64 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
       <p><button type="button" class="link" data-open-week="${week.n}">Open week ${week.n} to edit</button></p></section>`;
   }
 
+  /** Weekly load chart: planned (light) and done (solid) per week, phase bands, current week shaded. One series per chart, so no dual axis. */
+  function overviewHtml() {
+    const weeks = state.plan.weeks;
+    const trail = state.plan.mode === 'trail';
+    const rows = weeks.map((w) => {
+      const race = w.workouts.find((x) => x.role === 'RACE');
+      const pr = weekProgress(w, state.runs, today, state.plan.mode);
+      const started = w.start <= today;
+      return {
+        n: w.n, start: w.start, phase: w.phase, down: w.kind === 'down', current: diffDays(w.start, today) >= 0 && diffDays(w.start, today) < 7,
+        hours: ((w.plannedMin + (race?.plannedMin ?? 0)) / 60), doneHours: started ? pr.actualMin / 60 : null,
+        vert: w.plannedVertM, doneVert: started ? pr.actualVertM : null,
+        km: w.plannedKm + (race?.plannedKm ?? 0), doneKm: started ? pr.actualKm : null,
+      };
+    });
+    const W = 760, L = 44, R = 8, T = 12, H = 120, B = 34;
+    const bw = (W - L - R) / rows.length;
+    const chart = (key, doneKey, unit, fmt) => {
+      const max = Math.max(1, ...rows.map((r) => Math.max(r[key], r[doneKey] ?? 0)));
+      const top = Math.ceil(max / (max > 20 ? 10 : 1)) * (max > 20 ? 10 : 1);
+      const y = (v) => T + H - (v / top) * H;
+      const bars = rows.map((r, i) => {
+        const x = L + i * bw;
+        const tip = `Week ${r.n} (${r.start}), ${PHASE_LABEL[r.phase]}${r.down ? ', down week' : ''}: planned ${fmt(r[key])}${r[doneKey] != null ? `, done ${fmt(r[doneKey])}` : ''}`;
+        const w = Math.max(1, bw - 2);
+        return `<g class="ov-week${r.current ? ' now' : ''}" data-open-week="${r.n}" tabindex="0" role="button" aria-label="${esc(tip)}">
+          <title>${esc(tip)}</title>
+          <rect x="${x}" y="${T}" width="${bw}" height="${H + B}" fill="transparent"/>
+          ${r.current ? `<rect x="${x}" y="${T}" width="${bw}" height="${H}" class="ov-now"/>` : ''}
+          <rect x="${x + 1}" y="${y(r[key])}" width="${w}" height="${T + H - y(r[key])}" class="ov-plan" rx="2"/>
+          ${r[doneKey] ? `<rect x="${x + 1 + w * 0.25}" y="${y(r[doneKey])}" width="${w * 0.5}" height="${T + H - y(r[doneKey])}" class="ov-done" rx="2"/>` : ''}</g>`;
+      }).join('');
+      const grid = [0, 0.5, 1].map((f) => `<line x1="${L}" x2="${W - R}" y1="${y(top * f)}" y2="${y(top * f)}" class="ov-grid"/><text x="${L - 6}" y="${y(top * f) + 4}" text-anchor="end" class="ov-txt">${Math.round(top * f * 10) / 10}</text>`).join('');
+      let phases = '';
+      rows.forEach((r, i) => {
+        if (i === 0 || rows[i - 1].phase !== r.phase) {
+          const end = rows.findIndex((q, j) => j > i && q.phase !== r.phase);
+          const span = (end < 0 ? rows.length : end) - i;
+          const x = L + i * bw;
+          phases += `<line x1="${x + 1}" x2="${x + span * bw - 1}" y1="${T + H + 8}" y2="${T + H + 8}" class="ov-phase"/><text x="${x + 2}" y="${T + H + 22}" class="ov-txt">${span >= 2 ? PHASE_LABEL[r.phase] : ''}</text>`;
+        }
+      });
+      const ticks = rows.filter((r) => r.n === 1 || r.n % 4 === 0).map((r) => `<text x="${L + (r.n - 1) * bw + bw / 2}" y="${T + H + 32}" text-anchor="middle" class="ov-txt">${r.n}</text>`).join('');
+      return `<svg viewBox="0 0 ${W} ${T + H + B}" class="overview-svg" role="group" aria-label="${esc(unit)} per week">${grid}${bars}${phases}${ticks}</svg>`;
+    };
+    const h = (v) => `${Math.round(v * 10) / 10} h`;
+    const m = (v) => `${Math.round(v)} m`;
+    const k = (v) => `${Math.round(v * 10) / 10} km`;
+    const charts = trail
+      ? `<p class="small muted">Hours per week</p>${chart('hours', 'doneHours', 'Hours', h)}<p class="small muted">Climbing per week (m)</p>${chart('vert', 'doneVert', 'Climbing', m)}`
+      : `<p class="small muted">Kilometres per week</p>${chart('km', 'doneKm', 'Kilometres', k)}`;
+    const table = `<details class="ov-table"><summary class="small">Show as table</summary><table><thead><tr><th>Week</th><th>Starts</th><th>Phase</th><th>Planned</th><th>Done</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${r.n}${r.down ? ' (down)' : ''}</td><td>${esc(r.start)}</td><td>${PHASE_LABEL[r.phase]}</td><td>${trail ? `${h(r.hours)} · ${m(r.vert)}` : k(r.km)}</td><td>${r.doneHours == null && r.doneKm == null ? '' : trail ? `${h(r.doneHours)} · ${m(r.doneVert)}` : k(r.doneKm)}</td></tr>`).join('')}</tbody></table></details>`;
+    return `<section class="card overview"><h2>Plan overview</h2>
+      <p class="small"><span class="ov-key plan"></span> Planned <span class="ov-key done"></span> Done <span class="ov-key now"></span> This week. Select a week to open it.</p>${charts}${table}</section>`;
+  }
+
   function render() {
-    el.innerHTML = `${bannersHtml()}${state.plan ? thisWeekHtml() : ''}${headerCard()}${state.plan ? aiFeedbackHtml() : ''}${state.plan ? suggestionsHtml() : ''}${state.plan ? state.plan.weeks.map(weekHtml).join('') : ''}`;
+    el.innerHTML = `${bannersHtml()}${state.plan ? thisWeekHtml() : ''}${headerCard()}${state.plan ? overviewHtml() : ''}${state.plan ? aiFeedbackHtml() : ''}${state.plan ? suggestionsHtml() : ''}${state.plan ? state.plan.weeks.map(weekHtml).join('') : ''}`;
     const n = state.notice;
     if (n && n.kind === 'ok' && !n.timer) {
       n.timer = setTimeout(() => {
@@ -594,6 +650,9 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
     const d = el.querySelector(`details[data-week="${n}"]`);
     d?.scrollIntoView({ block: 'start' });
     d?.querySelector('summary')?.focus();
+  });
+  el.addEventListener('keydown', (e) => {
+    if ((e.key === 'Enter' || e.key === ' ') && e.target.matches?.('g[data-open-week]')) { e.preventDefault(); e.target.dispatchEvent(new MouseEvent('click', { bubbles: true })); }
   });
 
   // drag and drop (mouse) and tap-to-pick (touch, keyboard) on the week strip

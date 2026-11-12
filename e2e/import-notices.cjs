@@ -43,6 +43,7 @@ const fs = require('fs');
   const card = (await page.locator('section.card:has(details.plan-notes)').first().textContent()).replace(/\s+/g, ' ');
   out.plan = {
     notesBlocks: await page.locator('details.plan-notes').count(),
+    overviewCharts: await page.locator('.overview-svg').count(),
     openAfterGenerate: await page.locator('details.plan-notes[open]').count(),
     summary: ((await page.locator('details.plan-notes > summary').textContent()) || '').replace(/\s+/g, ' ').trim().slice(0, 140),
     durationMentions: (card.match(/Expected (race )?duration/g) ?? []).length,
@@ -65,7 +66,7 @@ const fs = require('fs');
     && out.addAll.grey === 0 && out.addAll.unusable === 4 && out.addAll.red === 0 && out.addAll.rows === 11 && out.addAll.runs === 7
     && /7 runs added · 4 files not usable \(Shorter than 1 km, No distance in file\)/.test(out.addAll.summary)
     && out.plan.notesBlocks === 1 && out.plan.openAfterGenerate === 1 && /warning/.test(out.plan.summary)
-    && out.plan.durationMentions === 1 && !out.plan.hillsNoticeAndNoClimbDays
+    && out.plan.overviewCharts === 2 && out.plan.durationMentions === 1 && !out.plan.hillsNoticeAndNoClimbDays
     && out.plan.saved === 1 && out.plan.savedAfter === 0 && out.plan.closedByClick === 0 && out.plan.afterReloadOpen === 0 && !errors.length;
   console.log(ok ? 'PASS' : 'FAIL');
   await browser.close();
