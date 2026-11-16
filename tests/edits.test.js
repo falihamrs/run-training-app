@@ -179,3 +179,51 @@ test('swap: a climbing run going to a flat day warns by hand and is refused from
   assert.ok(mv.ok, mv.error);
   assert.ok(mv.warnings.some((m) => /flat day/.test(m)), mv.warnings.join(' | '));
 });
+
+test('move to the week before or after: both weeks re-totalled, warnings, undo, refusals', () => {
+  // week 3: Mon S, Wed Q2, Fri Q1, Sat E, Sun L. Week 4 (down): same days.
+  const e3 = wk(trail, 3).workouts.find((w) => w.role === 'E');
+  const [min3, min4] = [wk(trail, 3).plannedMin, wk(trail, 4).plannedMin];
+  const r = applyChange(trail, { op: 'move', workout: e3.id, to: 'Tue', week: 4 }, { today });
+  assert.ok(r.ok, r.error);
+  const moved = get(r.plan, 'w4-Tue');
+  assert.equal(moved.date, addDays(wk(trail, 4).start, 1));
+  assert.equal(moved.edited, true);
+  assert.ok(!wk(r.plan, 3).workouts.some((w) => w.id === e3.id || w.id === 'w4-Tue'));
+  assert.equal(wk(r.plan, 3).plannedMin, min3 - e3.plannedMin);
+  assert.equal(wk(r.plan, 4).plannedMin, min4 + e3.plannedMin);
+  assert.equal(sum(wk(r.plan, 3)), wk(r.plan, 3).plannedMin);
+  assert.equal(sum(wk(r.plan, 4)), wk(r.plan, 4).plannedMin);
+  assert.deepEqual(wk(r.plan, 4).workouts.map((w) => w.date), [...wk(r.plan, 4).workouts.map((w) => w.date)].sort());
+  assert.match(r.summary, /\(week 4\)/);
+  assert.ok(r.warnings.some((x) => /down week/.test(x)), r.warnings.join('|'));
+  const back = undoLast(applyChanges(trail, [{ op: 'move', workout: e3.id, to: 'Tue', week: 4 }], { today }).plan);
+  assert.equal(wk(back, 3).plannedMin, min3);
+  assert.equal(wk(back, 4).plannedMin, min4);
+  assert.ok(get(back, e3.id));
+
+  // a second long run in the target week is warned about
+  const l3 = wk(trail, 3).workouts.find((w) => w.role === 'L');
+  const two = applyChange(trail, { op: 'move', workout: l3.id, to: 'Tue', week: 4 }, { today });
+  assert.ok(two.ok, two.error);
+  assert.ok(two.warnings.some((x) => /two long runs/.test(x)), two.warnings.join('|'));
+
+  // backwards works too
+  const e5 = wk(trail, 5).workouts.find((w) => w.role === 'E');
+  const b = applyChange(trail, { op: 'move', workout: e5.id, to: 'Thu', week: 4 }, { today });
+  assert.ok(b.ok, b.error);
+  assert.ok(get(b.plan, 'w4-Thu'));
+
+  // refusals
+  assert.match(applyChange(trail, { op: 'move', workout: e3.id, to: 'Tue', week: 5 }, { today }).error, /week before or the week after/);
+  assert.match(applyChange(trail, { op: 'move', workout: e3.id, to: 'Tue', week: 99 }, { today }).error, /no week 99/);
+  assert.match(applyChange(trail, { op: 'move', workout: e3.id, to: 'Tue', week: 4 }, { today, source: 'ai' }).error, /within its own week/);
+  assert.match(applyChange(trail, { op: 'move', workout: e3.id, to: 'Sat', week: 4 }, { today }).error, /already has/);
+  const lockedPlan = JSON.parse(JSON.stringify(trail));
+  lockedPlan.weeks[3].locked = true;
+  assert.match(applyChange(lockedPlan, { op: 'move', workout: e3.id, to: 'Tue', week: 4 }, { today }).error, /Week 4 is locked/);
+  const e2 = wk(trail, 2).workouts.find((w) => w.role === 'E');
+  assert.match(applyChange(trail, { op: 'move', workout: e2.id, to: 'Mon', week: 1 }, { today }).error, /past/);
+  // same week number given: an ordinary move
+  assert.ok(applyChange(trail, { op: 'move', workout: e3.id, to: 'Tue', week: 3 }, { today }).ok);
+});

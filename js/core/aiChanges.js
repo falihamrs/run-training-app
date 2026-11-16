@@ -171,10 +171,37 @@ function thresholdChange(settings, c, today) {
  * whether it would apply. Setting changes and threshold suggestions are checked on their own.
  * @returns {{kind:'plan'|'setting'|'threshold'|'unknown', status:'ok'|'refused'|'suggestion', change:object, text:string, reason:string|null, error:string|null, setting?:object, threshold?:object}[]}
  */
-export function previewChanges(plan, settings, rawChanges, { today, runs = [] }) {
+/**
+ * The id a workout of the old plan has in a rebuilt plan: the same id when that day still holds the same kind of
+ * session, otherwise the session with the same role in the same week (the 2nd easy run maps to the 2nd easy run).
+ * Returns the id unchanged when nothing matches.
+ */
+export function remapWorkoutId(oldPlan, newPlan, id) {
+  const all = (p) => p.weeks.flatMap((w) => w.workouts);
+  const old = all(oldPlan).find((w) => w.id === id);
+  if (!old) return id;
+  const oldWeek = oldPlan.weeks.find((w) => w.workouts.includes(old));
+  const newWeek = newPlan.weeks.find((w) => w.n === oldWeek.n);
+  if (!newWeek) return id;
+  const same = newWeek.workouts.find((w) => w.id === id);
+  if (same && same.role === old.role) return id;
+  const nth = oldWeek.workouts.filter((w) => w.role === old.role).indexOf(old);
+  const cands = newWeek.workouts.filter((w) => w.role === old.role);
+  return (cands[nth] ?? cands.at(-1))?.id ?? id;
+}
+
+/**
+ * @param {object} [o.from] the plan the AI saw, when `plan` was rebuilt since (setting changes): workout ids
+ *   are then translated to the matching session of the rebuilt plan.
+ */
+export function previewChanges(plan, settings, rawChanges, { today, runs = [], from = null }) {
   let trial = plan;
   return rawChanges.map((raw) => {
     const c = normalize(raw);
+    if (from && plan && from !== plan) {
+      if (c.workout) c.workout = remapWorkoutId(from, plan, c.workout);
+      if (c.with) c.with = remapWorkoutId(from, plan, c.with);
+    }
     const reason = c.reason ?? null;
     if (!c.op) return { kind: 'unknown', status: 'refused', change: raw, text: JSON.stringify(raw).slice(0, 160), reason, error: 'Not understood: unknown "op".' };
     if (c.op === 'setting') {

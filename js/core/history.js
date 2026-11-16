@@ -172,3 +172,25 @@ export function analyzeHistory(runsIn, { planStart, asOf, lthr = null, selfRepor
   if (result.suggestions.thresholdPaceSecPerKm.confidence === 'low') result.notes.push('No hard flat effort found: do a 30-minute test run and upload it.');
   return result;
 }
+
+/**
+ * Weekly totals for the trends chart: the last `n` weeks (Monday to Sunday) ending with the current one.
+ * @returns {Array<{start:string, current:boolean, runs:number, km:number, hours:number, vertM:number, longestKm:number}>}
+ */
+export function weeklyTrend(runs, today, n = 16) {
+  const thisMonday = mondayOnOrBefore(today);
+  const out = [];
+  for (let i = n - 1; i >= 0; i--) {
+    const start = addDays(thisMonday, -7 * i);
+    const end = addDays(start, 6);
+    const inWeek = runs.filter((r) => r.date >= start && r.date <= end);
+    out.push({
+      start, current: i === 0, runs: inWeek.length,
+      km: inWeek.reduce((s, r) => s + (r.distanceKm || 0), 0),
+      hours: inWeek.reduce((s, r) => s + (r.movingSec || 0), 0) / 3600,
+      vertM: inWeek.reduce((s, r) => s + (r.gainM || 0), 0),
+      longestKm: inWeek.reduce((m, r) => Math.max(m, r.distanceKm || 0), 0),
+    });
+  }
+  return out;
+}

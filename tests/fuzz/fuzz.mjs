@@ -64,7 +64,7 @@ function randomChange(plan) {
   const all = plan.weeks.flatMap((w) => w.workouts).filter((x) => x.role !== 'RACE');
   const w = pick(all.length ? all : [{ id: 'w1-Mon' }]);
   switch (int(0, 8)) {
-    case 0: return { op: 'move', workout: w.id, to: pick([...WEEKDAYS, 'xyz', '']) };
+    case 0: return { op: 'move', workout: w.id, to: pick([...WEEKDAYS, 'xyz', '']), ...(rnd() < 0.3 ? { week: (Number(String(w.id).match(/^w(\d+)-/)?.[1]) || 1) + pick([-1, 1, 1, 2, 0]) } : {}) };
     case 1: return { op: 'duration', workout: w.id, minutes: pick([int(5, 400), '30', null, -1, 1e9]) };
     case 2: return { op: 'easy', workout: w.id, minutes: pick([undefined, int(10, 120)]) };
     case 3: return { op: 'rest', workout: w.id };

@@ -304,12 +304,13 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
     const a = state.ai;
     const settingItems = a.items.filter((it, i) => it.kind === 'setting' && it.status === 'ok' && a.checked.has(i));
     const { plan: base, messages } = await planAfterSettings(settingItems);
-    const fresh = base ? previewChanges(base, getSettings(), a.raw, { today, runs: state.runs }) : a.items;
+    const fresh = base ? previewChanges(base, getSettings(), a.raw, { today, runs: state.runs, from: state.plan }) : a.items;
     a.items = a.items.map((old, i) => {
       if (old.kind !== 'plan') return old;
       const it = fresh[i];
       if (!base) return { ...old, status: 'refused', error: `With the ticked setting changes the plan cannot be rebuilt: ${(messages ?? []).map((m) => m.text).join(' ')}` };
-      if (settingItems.length && it.status === 'refused' && /no workout/.test(it.error)) return { ...it, error: 'After the setting changes this workout is not in the rebuilt week any more.' };
+      if (settingItems.length && it.status === 'refused' && /no workout/.test(it.error)) return { ...it, error: 'After the setting changes the rebuilt week has no session of this kind any more.' };
+      if (settingItems.length && it.status === 'refused' && /already on that day/.test(it.error)) return { ...it, error: 'The rebuilt plan already has this session on that day, so nothing more is needed.' };
       return settingItems.length && it.status === 'ok' ? { ...it, text: `${it.text} (in the rebuilt plan)` } : it;
     });
     a.items.forEach((it, i) => { if (it.kind === 'plan' && it.status !== 'ok') a.checked.delete(i); });
@@ -425,7 +426,7 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
         <span class="dlabel">${d} ${Number(date.slice(8))}</span>${items || '<span class="muted rest">rest</span>'}</div>`;
     }).join('');
     const hint = state.pick && state.plan.weeks.find((x) => x.workouts.some((w) => w.id === state.pick))?.n === week.n
-      ? '<p class="small" role="status">Now press the day to move it to, or a session to swap with. Press Escape to cancel.</p>'
+      ? '<p class="small" role="status">Now press the day to move it to (also in the week before or after), or a session of this week to swap with. Press Escape to cancel.</p>'
       : '';
     return `<div class="daystrip" role="group" aria-label="Week ${week.n} days">${cells}</div>${hint}`;
   }
@@ -442,20 +443,22 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
     return state.plan.weeks.find((x) => x.workouts.some((w) => w.id === id));
   }
 
-  /** Moves a workout to a day of its own week, or swaps it with the session of the same kind already there. */
-  async function dropWorkout(id, day) {
+  /** Moves a workout to a day (of its own week, or the week before or after), or swaps it with the session of the same kind already there (own week only). */
+  async function dropWorkout(id, day, weekN = null) {
     state.pick = null;
     const week = weekOf(id);
     if (!week) return render();
     const w = week.workouts.find((x) => x.id === id);
     const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-    const date = addDays(week.start, DAYS.indexOf(day));
+    const target = weekN == null ? week : state.plan.weeks.find((x) => x.n === weekN) ?? week;
+    const date = addDays(target.start, DAYS.indexOf(day));
     keepOpen();
     if (date === w.date) return render();
-    const other = week.workouts.find((x) => x.date === date && x.id !== id && (x.role === 'S') === (w.role === 'S'));
-    const changes = other ? [{ op: 'swap', workout: id, with: other.id }] : [{ op: 'move', workout: id, to: day }];
-    await commit(changes, { focus: `week-${week.n}`, fixed: true });
-    focusItem(id.replace(/^(w\d+-)[A-Z][a-z]{2}/, `$1${day}`)) ?? focusItem(id);
+    const other = target === week ? week.workouts.find((x) => x.date === date && x.id !== id && (x.role === 'S') === (w.role === 'S')) : null;
+    const changes = other ? [{ op: 'swap', workout: id, with: other.id }] : [{ op: 'move', workout: id, to: day, ...(target === week ? {} : { week: target.n }) }];
+    state.open.add(target.n);
+    await commit(changes, { focus: `week-${target.n}`, fixed: true });
+    focusItem(id.replace(/^w\d+-[A-Z][a-z]{2}/, `w${target.n}-${day}`)) ?? focusItem(id);
   }
 
   function weekHtml(week) {
@@ -593,7 +596,7 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
   }
 
   function render() {
-    el.innerHTML = `${bannersHtml()}<div class="plan-cols"><aside class="plan-side">${state.plan ? thisWeekHtml() + readinessHtml() : ''}</aside><div class="plan-main">${headerCard()}${state.plan ? overviewHtml() : ''}${state.plan ? aiFeedbackHtml() : ''}${state.plan ? suggestionsHtml() : ''}${state.plan ? '<p class="muted small weeks-hint">In each week, drag a session to another day to move it, or onto another session to swap. Without a mouse: press a session, then the day.</p>' + state.plan.weeks.map(weekHtml).join('') : ''}</div></div>`;
+    el.innerHTML = `${bannersHtml()}<div class="plan-cols"><aside class="plan-side">${state.plan ? thisWeekHtml() + readinessHtml() : ''}</aside><div class="plan-main">${headerCard()}${state.plan ? overviewHtml() : ''}${state.plan ? aiFeedbackHtml() : ''}${state.plan ? suggestionsHtml() : ''}${state.plan ? '<p class="muted small weeks-hint">Drag a session to another day to move it (also into the week before or after), or onto another session of its week to swap. Without a mouse: press a session, then the day.</p>' + state.plan.weeks.map(weekHtml).join('') : ''}</div></div>`;
     const n = state.notice;
     if (n && n.kind === 'ok' && !n.timer) {
       n.timer = setTimeout(() => {
@@ -753,8 +756,7 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
     el.classList.remove('dragging-session');
     if (!cell || !id || !weekOf(id)) return;
     e.preventDefault();
-    if (weekOf(id).n !== Number(cell.dataset.week)) { state.editMsg = { id: `week-${weekOf(id).n}`, kind: 'error', text: 'A session can only move within its own week.' }; keepOpen(); return render(); }
-    dropWorkout(id, cell.dataset.day);
+    dropWorkout(id, cell.dataset.day, Number(cell.dataset.week));
   });
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape' || !state.pick || !el.isConnected) return;
@@ -778,8 +780,7 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
       return void focusItem(id);
     }
     if (picked) {
-      if (weekOf(picked)?.n !== weekN) { state.editMsg = { id: `week-${weekOf(picked).n}`, kind: 'error', text: 'A session can only move within its own week.' }; state.pick = null; return render(); }
-      return dropWorkout(picked, cell.dataset.day);
+      return dropWorkout(picked, cell.dataset.day, weekN);
     }
   });
 

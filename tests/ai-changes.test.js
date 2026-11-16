@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { BLOCK_TAG, applyPlanItems, changeFormatText, parseChangeBlock, previewChanges, settingsWith } from '../js/core/aiChanges.js';
+import { BLOCK_TAG, applyPlanItems, changeFormatText, parseChangeBlock, previewChanges, remapWorkoutId, settingsWith } from '../js/core/aiChanges.js';
 import { aiReport } from '../js/core/aiExport.js';
 import { addDays, nextMonday } from '../js/core/dates.js';
 import { generatePlan } from '../js/core/plan/generate.js';
@@ -120,4 +120,31 @@ test('an AI can swap two sessions of a later week; an unknown partner or the cur
   assert.match(changeFormatText(plan, today), /"op": "swap"/);
   const cur = plan.weeks[0].workouts.filter((x) => x.role !== 'S' && x.role !== 'RACE' && x.date > today);
   if (cur.length >= 2) assert.match(applyChange(plan, { op: 'swap', workout: cur[0].id, with: cur[1].id }, { today, source: 'ai' }).error, /next Monday/);
+});
+
+test('setting changes plus workout changes: ids are translated to the rebuilt plan', () => {
+  // the AI saw the long run on Sunday; with the long-run day changed to Saturday the plan is rebuilt
+  const s2 = JSON.parse(JSON.stringify(settings));
+  s2.schedule.longRunDay = 'Sat';
+  const rebuilt = generatePlan(s2, hist(), { today: '2026-12-28' }).plan;
+  const oldLong = byRole(5, 'L');
+  const newLong = rebuilt.weeks[4].workouts.find((w) => w.role === 'L');
+  assert.equal(oldLong.id, 'w5-Sun');
+  assert.equal(newLong.id, 'w5-Sat');
+  assert.equal(remapWorkoutId(plan, rebuilt, oldLong.id), newLong.id);
+  assert.equal(remapWorkoutId(plan, rebuilt, 'w5-Mon-S'), rebuilt.weeks[4].workouts.find((w) => w.role === 'S').id);
+  assert.equal(remapWorkoutId(plan, rebuilt, 'nope'), 'nope');
+  assert.equal(remapWorkoutId(plan, plan, oldLong.id), oldLong.id);
+
+  const raw = [{ op: 'duration', workout: oldLong.id, minutes: oldLong.plannedMin - 20 }, { op: 'rest', workout: byRole(5, 'E').id }];
+  // without the translation the long run change misses or hits the wrong session
+  const direct = previewChanges(rebuilt, s2, raw, { today });
+  assert.notEqual(direct[0].change.workout, newLong.id);
+  const items = previewChanges(rebuilt, s2, raw, { today, from: plan });
+  assert.equal(items[0].status, 'ok', items[0].error);
+  assert.equal(items[0].change.workout, newLong.id);
+  assert.equal(items[1].status, 'ok', items[1].error);
+  const r = applyPlanItems(rebuilt, items, { today });
+  assert.equal(r.plan.weeks[4].workouts.find((w) => w.role === 'L').plannedMin, newLong.plannedMin - 20);
+  assert.ok(!r.plan.weeks[4].workouts.some((w) => w.role === 'E' && w.id === items[1].change.workout));
 });

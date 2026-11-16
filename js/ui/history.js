@@ -1,7 +1,7 @@
 // History screen: upload TCX/GPX files, review runs, see the summary and threshold suggestions.
 import { parseActivityFile } from '../core/tcx.js';
 import { analyzeActivity } from '../core/analyze.js';
-import { analyzeHistory } from '../core/history.js';
+import { analyzeHistory, weeklyTrend } from '../core/history.js';
 import { formatDuration, formatPace, parsePace } from '../core/units.js';
 import { prescribedSnapshot } from '../core/targets.js';
 import { runsByWorkout, suggestMatch } from '../core/tracking.js';
@@ -90,6 +90,46 @@ export function mountHistory(el, { storage, getSettings, today, tzOffsetMin = nu
         <label class="field"><span class="lbl">Longest recent run (km)</span><input type="number" min="0" step="0.5" data-sr="longestRunKm" value="${esc(r.longestRunKm ?? '')}"></label>
         <label class="field"><span class="lbl">Easy pace (m:ss per km)</span><input type="text" placeholder="6:30" data-sr="easyPace" value="${esc(r.easyPaceSecPerKm != null ? formatPace(r.easyPaceSecPerKm) : '')}"></label>
       </div></section>`;
+  }
+
+  /** Weekly trend bars for the last 16 weeks: time and climbing for trail, distance for road. The current week is paler. */
+  function trendsCard() {
+    if (!state.runs.length) return '';
+    const trail = getSettings().race.mode === 'trail';
+    const rows = weeklyTrend(state.runs, today, 16);
+    const W = 760, L = 44, R = 8, T = 12, H = 110, B = 24;
+    const bw = (W - L - R) / rows.length;
+    const chart = (key, unit, fmt) => {
+      const max = Math.max(...rows.map((r) => r[key]));
+      const step = max > 2000 ? 1000 : max > 400 ? 200 : max > 100 ? 50 : max > 40 ? 20 : max > 10 ? 5 : max > 4 ? 2 : 1;
+      const top = Math.max(step, Math.ceil(max / step) * step);
+      const y = (v) => T + H - (v / top) * H;
+      const grid = [0, 0.5, 1].map((f) => `<line x1="${L}" x2="${W - R}" y1="${y(top * f)}" y2="${y(top * f)}" class="ov-grid"/><text x="${L - 6}" y="${y(top * f) + 4}" text-anchor="end" class="ov-txt">${Math.round(top * f * 10) / 10}</text>`).join('');
+      const bars = rows.map((r, i) => {
+        const x = L + i * bw;
+        const tip = `Week of ${fmtDate(r.start, 'day')}${r.current ? ' (this week so far)' : ''}: ${fmt(r[key])}, ${r.runs} run${r.runs === 1 ? '' : 's'}`;
+        return `<g class="tr-week" tabindex="0" role="img" aria-label="${esc(tip)}"><title>${esc(tip)}</title>
+          <rect x="${x}" y="${T}" width="${bw}" height="${H}" fill="transparent"/>
+          ${r[key] > 0 ? `<rect x="${x + 1}" y="${y(r[key])}" width="${Math.max(1, bw - 2)}" height="${T + H - y(r[key])}" class="${r.current ? 'ov-plan' : 'ov-done'}" rx="2"/>` : ''}</g>`;
+      }).join('');
+      const ticks = rows.map((r, i) => (i % 4 === 0 || i === rows.length - 1 ? `<text x="${L + i * bw + bw / 2}" y="${T + H + 16}" text-anchor="middle" class="ov-txt">${esc(fmtDate(r.start, 'short'))}</text>` : '')).join('');
+      return `<svg viewBox="0 0 ${W} ${T + H + B}" class="overview-svg" role="group" aria-label="${esc(unit)} per week, last 16 weeks">${grid}${bars}${ticks}</svg>`;
+    };
+    const h = (v) => `${Math.round(v * 10) / 10} h`;
+    const m = (v) => `${Math.round(v)} m`;
+    const k = (v) => `${Math.round(v * 10) / 10} km`;
+    const full = rows.filter((r) => !r.current);
+    const avg = (arr, key) => (arr.length ? arr.reduce((s, r) => s + r[key], 0) / arr.length : 0);
+    const key = trail ? 'hours' : 'km';
+    const [recent, earlier] = [avg(full.slice(-4), key), avg(full.slice(-8, -4), key)];
+    const f = trail ? h : k;
+    const change = earlier > 0 ? `Last 4 full weeks average ${f(recent)} a week, ${recent >= earlier ? 'up' : 'down'} from ${f(earlier)} in the 4 weeks before.` : `Last 4 full weeks average ${f(recent)} a week.`;
+    const charts = trail
+      ? `<p class="small muted">Hours per week</p>${chart('hours', 'Hours', h)}<p class="small muted">Climbing per week (m)</p>${chart('vertM', 'Climbing', m)}`
+      : `<p class="small muted">Kilometres per week</p>${chart('km', 'Kilometres', k)}`;
+    const table = `<details class="ov-table"><summary class="small">Show as table</summary><table><thead><tr><th>Week of</th><th>Runs</th><th>km</th><th>Hours</th><th>Climb m</th><th>Longest km</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${esc(fmtDate(r.start, 'day'))}${r.current ? ' (so far)' : ''}</td><td>${r.runs}</td><td>${r.km.toFixed(1)}</td><td>${r.hours.toFixed(1)}</td><td>${Math.round(r.vertM)}</td><td>${r.longestKm.toFixed(1)}</td></tr>`).join('')}</tbody></table></details>`;
+    return `<section class="card trends"><h2>Trends <span class="muted small">last 16 weeks</span></h2>
+      <p class="small">${change} <span class="ov-key done"></span> Full week <span class="ov-key plan"></span> This week so far</p>${charts}${table}</section>`;
   }
 
   function summaryCard(h) {
@@ -203,7 +243,7 @@ export function mountHistory(el, { storage, getSettings, today, tzOffsetMin = nu
     const h = summary();
     el.innerHTML = `${storage ? '' : '<p class="notice error">Storage is not available, so uploaded runs cannot be kept.</p>'}
       ${state.error ? `<p class="notice error">${esc(state.error)}</p>` : ''}
-      ${uploadCard()}${summaryCard(h)}${suggestionCard(h)}${state.runs.length ? '' : selfReportCard()}${runsCard()}${climbCard()}`;
+      ${uploadCard()}${summaryCard(h)}${trendsCard()}${suggestionCard(h)}${state.runs.length ? '' : selfReportCard()}${runsCard()}${climbCard()}`;
     el._summary = h;
   }
 

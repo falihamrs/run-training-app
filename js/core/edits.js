@@ -125,7 +125,7 @@ function ruleProblems(plan, week, w, before, { moved = false, oldMin = null } = 
 
 /**
  * Applies one change to a copy of the plan. A change is one of:
- *   { op: 'move', workout, to: 'Mon'..'Sun' }      within the same week
+ *   { op: 'move', workout, to: 'Mon'..'Sun', week? } within the same week; by hand also to the week before or after (week = its number)
  *   { op: 'swap', workout, with }                 two workouts of one week trade days
  *   { op: 'duration', workout, minutes }
  *   { op: 'easy', workout, minutes? }             becomes an easy run (default: same length, at most 45 min)
@@ -142,16 +142,30 @@ export function applyChange(planIn, change, { today, source = 'manual', runs = [
   if (!['move', 'duration', 'easy', 'rest'].includes(op)) return fail(`Unknown change "${op}".`);
   const lock = lockReason(plan, change.workout, { today, source, runs });
   if (lock) return fail(lock);
-  const { week, w } = find(plan, change.workout);
-  const before = { plannedMin: week.plannedMin, plannedKm: week.plannedKm };
+  const found = find(plan, change.workout);
+  const { w } = found;
+  let { week } = found;
+  let before = { plannedMin: week.plannedMin, plannedKm: week.plannedKm };
   const label = `${w.weekday} ${w.date} ${w.name}`;
   const oldMin = w.plannedMin;
   let summary;
+  let crossWeek = null;
 
   if (op === 'move') {
     const to = String(change.to ?? '').slice(0, 3);
     const day = WEEKDAYS.find((d) => d.toLowerCase() === to.toLowerCase());
     if (!day) return fail('Give a weekday to move to, Mon to Sun.');
+    // a move may also go to the week before or after (by hand only): the workout changes week and both weeks are re-totalled
+    const from = week;
+    if (change.week != null && Number(change.week) !== week.n) {
+      const target = plan.weeks.find((x) => x.n === Number(change.week));
+      if (!target) return fail(`There is no week ${change.week} in this plan.`);
+      if (source === 'ai') return fail('Changes from an AI move a workout within its own week.');
+      if (Math.abs(target.n - week.n) !== 1) return fail('A workout can move to the week before or the week after, not further.');
+      if (target.locked) return fail(`Week ${target.n} is locked because it was already trained when the plan was regenerated.`);
+      week = target;
+      before = { plannedMin: week.plannedMin, plannedKm: week.plannedKm };
+    }
     const date = addDays(week.start, WEEKDAYS.indexOf(day));
     if (date === w.date) return fail('The workout is already on that day.');
     if (date > plan.raceDate || (w.role !== 'S' && date === plan.raceDate)) return fail('That day is not before the race.');
@@ -160,8 +174,15 @@ export function applyChange(planIn, change, { today, source = 'manual', runs = [
     if (taken) return fail(`${day} already has ${taken.name}. Move that one first, or make one of them a rest day.`);
     const id = `w${week.n}-${day}${isRun(w) ? (w.code === 'SHK' ? '-SHK' : '') : '-S'}`;
     if (plan.weeks.some((x) => x.workouts.some((y) => y.id === id && y !== w))) return fail('That day already has a workout with the same id.');
-    summary = `${label} moved to ${day} ${date}`;
+    summary = `${label} moved to ${day} ${date}${week !== from ? ` (week ${week.n})` : ''}`;
     Object.assign(w, { date, weekday: day, id, terrain: isRun(w) ? plan.settingsSnapshot?.dayTerrain?.[day] ?? w.terrain : w.terrain });
+    if (week !== from) {
+      from.workouts = from.workouts.filter((x) => x !== w);
+      week.workouts.push(w);
+      if ('week' in w) w.week = week.n;
+      retotal(plan, from);
+      crossWeek = from;
+    }
     sortWeek(week);
   } else if (op === 'rest') {
     week.workouts = week.workouts.filter((x) => x !== w);
@@ -192,6 +213,13 @@ export function applyChange(planIn, change, { today, source = 'manual', runs = [
   if (w && op !== 'rest') w.edited = true;
   retotal(plan, week);
   const problems = ruleProblems(plan, week, op === 'rest' ? null : w, before, { moved: op === 'move', oldMin });
+  if (crossWeek) {
+    const count = (role) => week.workouts.filter((x) => x.role === role).length;
+    if (w.role === 'L' && count('L') > 1) problems.push(`Week ${week.n} would have two long runs.`);
+    else if (HARD.has(w.role) && w.role !== 'L' && week.workouts.filter((x) => HARD.has(x.role) && x.role !== 'L').length > 2) problems.push(`Week ${week.n} would have more than two hard sessions.`);
+    if (week.phase !== crossWeek.phase) problems.push(`This session was built for the ${crossWeek.phase} phase and week ${week.n} is in the ${week.phase} phase.`);
+    if (week.kind === 'down' && crossWeek.kind !== 'down') problems.push(`Week ${week.n} is a down week, meant for recovery.`);
+  }
   if (problems.length && source === 'ai') return fail(problems.join(' '));
   log(plan, { source, change, summary, at, warnings: problems });
   return { ok: true, plan, warnings: problems, summary };

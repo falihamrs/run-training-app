@@ -43,7 +43,7 @@ const fs = require('fs');
   const card = (await page.locator('section.card:has(details.plan-notes)').first().textContent()).replace(/\s+/g, ' ');
   out.plan = {
     notesBlocks: await page.locator('details.plan-notes').count(),
-    overviewCharts: await page.locator('.overview-svg').count(),
+    overviewCharts: await page.locator('#page-plan .overview-svg').count(),
     openAfterGenerate: await page.locator('details.plan-notes[open]').count(),
     summary: ((await page.locator('details.plan-notes > summary').textContent()) || '').replace(/\s+/g, ' ').trim().slice(0, 140),
     durationMentions: (card.match(/Expected (race )?duration/g) ?? []).length,

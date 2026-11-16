@@ -162,7 +162,10 @@ edits it will replace.
 **Changing the schedule of a week.** Every open week has a strip of its seven days. Drag a session onto
 another day to move it, or onto another session to swap the two (a run swaps with a run, strength with
 strength). Without a mouse (keyboard, touch), press a session, then press the day or session to move it to;
-Escape cancels. Sessions can only move within their own week. Days in the past, the race day, locked weeks
+Escape cancels. A session can also move to a day of the week before or the week after (not further, and
+not by an AI): both weeks are re-totalled, and you are warned when the target week goes more than 10% over
+its target, gets a second long run or a third hard session, is a down week, or is in another phase. Swaps
+stay within one week. Days in the past, the race day, locked weeks
 and sessions with a matched run are not drop targets. A swap or move follows the same checks as the Edit
 form, and a climbing session that lands on a flat day gets a warning (an AI change is refused). Swaps are
 saved and undone as one step. An AI can ask for one with `{ "op": "swap", "workout": "w6-Tue", "with": "w6-Thu" }`.
@@ -209,6 +212,10 @@ race duration is shown once, in the plan header. "Saved" style messages fade aft
 files not usable) and a "Details" list. Files skipped only because of their sport label offer "Add anyway";
 files that are too short or have no distance are shown in grey, not as errors.
 
+**Trends.** History has a Trends card: bars per week for the last 16 weeks (hours and climbing for trail,
+km for road), the current week paler, a line comparing the last 4 full weeks with the 4 before, and the same
+numbers as a table.
+
 ## Applying AI feedback
 
 The AI report ends with a format for changes: the AI is asked to finish its answer with a `plan-changes`
@@ -218,7 +225,8 @@ upload its answer (.md or .txt) or paste it. Each change is listed with the AI's
 - Workout and week changes start next Monday and must pass every training check; ones that do not are
   shown as refused, with the reason. Anything the app does not understand is listed, not guessed.
 - Setting changes (runs per week, long-run day, terrain or availability of a day) are saved in Settings
-  and rebuild the plan from next Monday. The workout changes are then checked against the rebuilt plan.
+  and rebuild the plan from next Monday. The workout changes are then checked against the rebuilt plan;
+  when the rebuild moved a session to another day, the change follows it (same week, same kind of session).
 - A threshold change is only a suggestion: "Review in Settings" opens it pre-filled for you to add.
 - "Apply selected" is one step that "Undo last change" reverses (settings stay changed).
 - Applied changes, with their reasons, appear in the next report, so the AI knows what it changed.

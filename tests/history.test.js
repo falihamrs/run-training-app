@@ -118,3 +118,27 @@ test('a runner with two weeks of history is not treated as returning from a brea
   assert.equal(fresh.returnFromBreak, false);
   assert.ok(Math.abs(fresh.baselineWeeklyKm - 16) < 0.01);
 });
+
+test('weeklyTrend: n weeks ending with the current one, totals per week', async () => {
+  const { weeklyTrend } = await import('../js/core/history.js');
+  const runs = [
+    { date: '2026-11-16', distanceKm: 5, movingSec: 1800, gainM: 50 },   // Monday, current week
+    { date: '2026-11-15', distanceKm: 12, movingSec: 4500, gainM: 300 }, // Sunday before
+    { date: '2026-11-11', distanceKm: 6, movingSec: 2100, gainM: 0 },
+    { date: '2026-07-01', distanceKm: 20, movingSec: 7200, gainM: 0 },   // outside the window
+  ];
+  const t = weeklyTrend(runs, '2026-11-18', 16);
+  assert.equal(t.length, 16);
+  assert.equal(t.at(-1).start, '2026-11-16');
+  assert.equal(t.at(-1).current, true);
+  assert.equal(t.at(-1).km, 5);
+  assert.equal(t.at(-2).start, '2026-11-09');
+  assert.equal(t.at(-2).runs, 2);
+  assert.equal(t.at(-2).km, 18);
+  assert.equal(t.at(-2).vertM, 300);
+  assert.equal(t.at(-2).longestKm, 12);
+  assert.ok(Math.abs(t.at(-2).hours - 6600 / 3600) < 1e-9);
+  assert.equal(t.filter((w) => w.current).length, 1);
+  assert.equal(t.reduce((s, w) => s + w.km, 0), 23);
+  assert.equal(t[0].start, '2026-08-03');
+});

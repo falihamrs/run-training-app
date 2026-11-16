@@ -67,12 +67,20 @@ const fs = require('fs');
   await day(t2).locator('button.item', { hasText: m2 }).first().click(); await page.waitForTimeout(300);
   const s4 = await strip();
   out.tapSwap = { t1, t2, m1, m2, after: s4 };
-  // 5. a session cannot go to another week, and the first week keeps no drop target for past days
-  const otherWeek = page.locator('details[data-week="5"]');
+  // 5. another week: two weeks away is refused, the next week works and both weeks are updated
+  const pickOne = async () => day(Object.keys(await strip()).find((d) => s4[d].some((l) => !/^S/.test(l)))).locator('button.item').first().click();
+  const count = async (n) => page.locator(`details[data-week="${n}"] .daystrip .item`).count();
+  await page.locator('details[data-week="6"] > summary').click();
   await page.locator('details[data-week="5"] > summary').click();
-  await day(Object.keys(s4).find((d) => s4[d].some((l) => !/^S/.test(l)))).locator('button.item').first().click();
-  await otherWeek.locator('.daystrip .day.empty[data-drop]').first().click(); await page.waitForTimeout(250);
-  out.crossWeek = ((await page.locator(`${W} [role=status]`).first().textContent().catch(() => '')) || '').trim();
+  await pickOne();
+  await page.locator('details[data-week="6"] .daystrip .day.empty[data-drop]').first().click(); await page.waitForTimeout(250);
+  out.crossFar = ((await page.locator('details[data-week="6"] p.notice[role=status]').first().textContent().catch(() => '')) || '').trim();
+  const [c4, c5] = [await count(4), await count(5)];
+  await pickOne();
+  await page.locator('details[data-week="5"] .daystrip .day.empty[data-drop]').first().click(); await page.waitForTimeout(300);
+  out.crossNext = { msg: ((await page.locator('details[data-week="5"] p.notice[role=status]').first().textContent().catch(() => '')) || '').trim(), w4: [c4, await count(4)], w5: [c5, await count(5)] };
+  await page.click('[data-act="undo"]'); await page.waitForTimeout(250);
+  out.crossUndone = [await count(4), await count(5)];
   out.pastDropTargets = await page.locator('.daystrip .day.fixed[data-drop]').count();
   // 6. undo each step, then reload keeps the changes made so far
   const snapshot = JSON.stringify(await strip());
@@ -85,13 +93,14 @@ const fs = require('fs');
   await page.locator(W).screenshot({ path: '/tmp/shots/drag_week_phone.png' });
   out.errors = errors;
   console.log(JSON.stringify(out, null, 1));
+  const c4m1 = (o) => o.crossNext.w4[0] - 1;
   const items = (s) => Object.values(s).flat().sort().join(',');
   const ok = items(s1) === items(s0) && s1[toRest].length === 1 && !s1[fromDay].some((l) => !/^S/.test(l)) && /moved to/.test(out.drag.msg)
     && s2[d1].includes(l2) && s2[d2].includes(l1) && /swapped with/.test(out.swap.msg)
     && out.listDays.join() === [...out.listDays].sort((a, b) => ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].indexOf(a) - ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].indexOf(b)).join()
     && out.picked.pressed === 1 && out.picked.hint && out.escaped === 0
     && s3[empty].length === 1 && s4[t1].includes(m2) && s4[t2].includes(m1)
-    && /only move within its own week/.test(out.crossWeek) && out.pastDropTargets === 0
+    && /week before or the week after/.test(out.crossFar) && /^Saved/.test(out.crossNext.msg) && out.crossNext.w4[1] === c4m1(out) && out.crossNext.w5[1] === out.crossNext.w5[0] + 1 && out.crossUndone[0] === out.crossNext.w4[0] && out.crossUndone[1] === out.crossNext.w5[0] && out.pastDropTargets === 0
     && out.undone.back && !errors.length;
   console.log(ok ? 'PASS' : 'FAIL');
   await page.screenshot({ path: '/tmp/shots/drag_drop.png', fullPage: false });

@@ -1,0 +1,50 @@
+// Optional browser check: an AI answer that changes a setting (long run day) and a workout the rebuild moves.
+// The workout change must follow the session into the rebuilt plan instead of being refused.
+const { chromium } = require('playwright');
+const fs = require('fs');
+const fx = require('./fixtures.cjs');
+(async () => {
+  const browser = await chromium.launch();
+  const ctx = await browser.newContext({ viewport: { width: 1300, height: 1000 }, timezoneId: 'Asia/Bangkok' });
+  await ctx.grantPermissions(['clipboard-read', 'clipboard-write']).catch(() => {});
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.clock.install({ time: new Date('2026-11-11T08:00:00+07:00') });
+  await page.goto('http://localhost:8080/index.html#settings');
+  await page.waitForSelector('.tabs');
+  await page.selectOption('[data-path="race.mode"]', 'trail');
+  await page.fill('[data-path="race.date"]', '2027-06-26'); await page.fill('[data-path="race.distanceKm"]', '25'); await page.fill('[data-path="race.elevationGainM"]', '2300');
+  await page.click('#page-settings [data-tab="schedule"]'); await page.selectOption('[data-path="schedule.runsPerWeek"]', '4');
+  for (const [d, t] of [['Mon', 'incline'], ['Wed', 'incline'], ['Sat', 'hills'], ['Sun', 'hills']]) await page.selectOption(`[data-path="schedule.dayTerrain.${d}"]`, t);
+  await page.click('#page-settings [data-tab="thresholds"]'); await page.fill('[data-draft="lthr"]', '171'); await page.fill('[data-draft="pace"]', '6:26');
+  await page.click('[data-action="add-threshold"]'); await page.click('[data-action="save"]'); await page.waitForTimeout(300);
+  await page.click('[data-page="history"]');
+  await page.setInputFiles('#hist-files', fx.all());
+  await page.waitForFunction(() => document.querySelectorAll('.results li').length >= 11, null, { timeout: 60000 }); await page.waitForTimeout(500);
+  await page.click('[data-page="plan"]'); await page.click('[data-act="generate"]'); await page.waitForTimeout(1500);
+  await page.selectOption('[data-ai-range]', 'all');
+  await page.click('[data-act="ai-copy"]'); await page.waitForTimeout(300);
+  const report = await page.evaluate(() => navigator.clipboard.readText());
+  const ids = [...report.matchAll(/\*\*(\w{3}) (\d{4}-\d\d-\d\d) · ([^*]+)\*\* \((\w+)\) \[([\w-]+)\]/g)].map((m) => ({ day: m[1], code: m[4], id: m[5] }));
+  const long3 = ids.find((x) => x.id.startsWith('w3-') && x.code === 'LR');
+  const toDay = long3.day === 'Sat' ? 'Sun' : 'Sat';
+  const answer = `Move the long run.\n\n\`\`\`plan-changes\n{ "changes": [\n { "op": "setting", "field": "longRunDay", "value": "${toDay}" },\n { "op": "duration", "workout": "${long3.id}", "minutes": 45, "reason": "shorter long run in week 3" }\n] }\n\`\`\`\n`;
+  fs.mkdirSync('/tmp/e2e', { recursive: true });
+  fs.writeFileSync('/tmp/e2e/ai-remap.md', answer);
+  await page.locator('#ai-feedback > summary').click();
+  await page.setInputFiles('[data-ai-file]', '/tmp/e2e/ai-remap.md');
+  await page.waitForSelector('.ai-items li'); await page.waitForTimeout(600);
+  const out = { long3, toDay };
+  out.preview = (await page.locator('.ai-items li').allTextContents()).map((t) => t.replace(/\s+/g, ' ').trim());
+  out.checked = await page.locator('[data-ai-item]:checked').count();
+  await page.click('[data-act="ai-apply"]'); await page.waitForTimeout(2000);
+  out.result = ((await page.locator('#ai-feedback [role=status]').textContent().catch(() => '')) || '').trim();
+  await page.locator('details[data-week="3"] > summary').click(); await page.waitForTimeout(200);
+  out.week3 = await page.locator('details[data-week="3"] .daystrip .day').evaluateAll((cells) => Object.fromEntries(cells.map((c) => [c.dataset.day, [...c.querySelectorAll('.item')].map((i) => i.textContent.trim())])));
+  console.log(JSON.stringify(out, null, 1), errors);
+  await browser.close();
+  const ok = out.checked === 2 && !out.preview.some((t) => /not in the rebuilt|no session of this kind|no workout/.test(t))
+    && /Applied 2 changes/.test(out.result) && (out.week3[toDay] || []).some((l) => /^LR 45/.test(l)) && !errors.length;
+  console.log(ok ? 'PASS' : 'FAIL'); process.exit(ok ? 0 : 1);
+})();
