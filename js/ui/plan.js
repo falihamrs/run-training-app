@@ -10,6 +10,8 @@ import { earliestThreshold, thresholdForDate } from '../core/thresholds.js';
 import { aiReport } from '../core/aiExport.js';
 import { actualCsv, resolveRange } from '../core/exportRange.js';
 import { clipWeeks, rangeLabel } from '../core/rangeUtil.js';
+import { planIcs } from '../core/calendar.js';
+import { readiness } from '../core/readiness.js';
 import { applyChanges, canUndo, editsLostByRegen, lockReason, undoLast } from '../core/edits.js';
 import { applyPlanItems, parseChangeBlock, previewChanges, settingsWith } from '../core/aiChanges.js';
 import { esc, fmtDate } from './util.js';
@@ -139,6 +141,7 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
         ${rangeSelect('data-file-range', state.fileRange)}
         <button type="button" data-act="csv">Plan CSV</button>
         <button type="button" data-act="actual-csv" title="One row per planned workout with the matched run, plus unplanned runs">Planned vs actual CSV</button>
+        <button type="button" data-act="ics" title="One all-day event per workout, for Google Calendar, Apple Calendar or Outlook">Calendar (.ics)</button>
         <button type="button" data-act="copy-plan">Copy as text</button>
         ${canUndo(state.plan) ? `<button type="button" data-act="undo" title="${esc(state.plan.undo.at(-1).label)}">Undo last change</button>` : ''}</div>
       ${customDatesHtml()}`;
@@ -565,8 +568,32 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
       <p class="small"><span class="ov-key plan"></span> Planned <span class="ov-key done"></span> Done <span class="ov-key now"></span> This week. Select a week to open it.</p>${charts}${table}</section>`;
   }
 
+  /** Race readiness: the last 4 full weeks of running against the plan for those weeks and the plan's peak. */
+  function readinessHtml() {
+    const r = readiness(state.plan, state.runs, today);
+    if (!r) return '';
+    const WORD = { ok: 'On track', near: 'A little behind', behind: 'Behind', none: '' };
+    const TAG = { ok: 'tag', near: 'tag coros', behind: 'tag coros', none: '' };
+    const rows = r.rows.map((x) => {
+      const scale = Math.max(x.peak ?? 0, x.planned ?? 0, x.now, 1);
+      const pct = (v) => Math.min(100, Math.round((v / scale) * 100));
+      const text = `${x.label}: ${x.now} ${x.unit} now${x.planned != null ? `, plan asked for ${x.planned} ${x.unit}` : ''}${x.peak ? `, peak ${x.peak} ${x.unit}` : ''}`;
+      return `<li class="rd-row" data-rd="${x.key}" data-status="${x.status}">
+        <div class="rd-head"><span>${x.label}</span><span><strong>${x.now} ${x.unit}</strong>${x.planned != null ? ` <span class="muted small">of ${x.planned} planned</span>` : ''}</span></div>
+        <div class="rd-bar" role="img" aria-label="${esc(text)}"><span class="rd-now" style="width:${pct(x.now)}%"></span>${x.planned != null ? `<span class="rd-plan" style="left:${pct(x.planned)}%"></span>` : ''}</div>
+        <div class="rd-foot muted small">${x.peak ? `Peak in this plan: ${x.peak} ${x.unit}` : ''}${x.status !== 'none' ? ` <span class="${TAG[x.status]}">${WORD[x.status]}</span>` : ''}</div></li>`;
+    }).join('');
+    const lead = r.planWeeks === 0
+      ? 'The plan has no finished week yet, so this shows where you start. It fills in after the first week.'
+      : { ok: 'Your recent weeks match what the plan asked for.', near: 'Your recent weeks are a little under the plan.', behind: 'Your recent weeks are well under the plan. Consider regenerating from next Monday.' }[r.overall];
+    return `<section class="card readiness"><h2>Race readiness <span class="muted small">${r.weeksToRace} week${r.weeksToRace === 1 ? '' : 's'} to race</span></h2>
+      <p class="small">${lead}</p>
+      <ul class="rd-list">${rows}</ul>
+      <p class="muted small">${r.planWeeks ? `Last ${r.planWeeks} finished plan week${r.planWeeks === 1 ? '' : 's'}` : 'Last 4 full weeks'} (${esc(fmtDate(r.window.from, 'short'))} to ${esc(fmtDate(r.window.to, 'short'))}), all runs. The line marks what the plan asked for in those weeks.</p></section>`;
+  }
+
   function render() {
-    el.innerHTML = `${bannersHtml()}<div class="plan-cols"><aside class="plan-side">${state.plan ? thisWeekHtml() : ''}</aside><div class="plan-main">${headerCard()}${state.plan ? overviewHtml() : ''}${state.plan ? aiFeedbackHtml() : ''}${state.plan ? suggestionsHtml() : ''}${state.plan ? '<p class="muted small weeks-hint">In each week, drag a session to another day to move it, or onto another session to swap. Without a mouse: press a session, then the day.</p>' + state.plan.weeks.map(weekHtml).join('') : ''}</div></div>`;
+    el.innerHTML = `${bannersHtml()}<div class="plan-cols"><aside class="plan-side">${state.plan ? thisWeekHtml() + readinessHtml() : ''}</aside><div class="plan-main">${headerCard()}${state.plan ? overviewHtml() : ''}${state.plan ? aiFeedbackHtml() : ''}${state.plan ? suggestionsHtml() : ''}${state.plan ? '<p class="muted small weeks-hint">In each week, drag a session to another day to move it, or onto another session to swap. Without a mouse: press a session, then the day.</p>' + state.plan.weeks.map(weekHtml).join('') : ''}</div></div>`;
     const n = state.notice;
     if (n && n.kind === 'ok' && !n.timer) {
       n.timer = setTimeout(() => {
@@ -829,6 +856,17 @@ export function mountPlan(el, { storage, today, getSettings, getHistory, goto, o
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
       a.download = `run-plan-${state.plan.raceDate}${suffix(range)}.csv`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+      return;
+    }
+    if (act === 'ics') {
+      const range = fileRange();
+      const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
+      const blob = new Blob([planIcs(state.plan, ctx(), { range, stamp })], { type: 'text/calendar' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `run-plan-${state.plan.raceDate}${suffix(range)}.ics`;
       a.click();
       setTimeout(() => URL.revokeObjectURL(a.href), 1000);
       return;

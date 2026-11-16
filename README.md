@@ -191,6 +191,16 @@ with the same three choices. Planned vs actual CSV has one row per planned worko
 (distance, time, pace, HR, climb, differences) and one row per run that matches no workout, sorted by date.
 File names carry the dates when a range is used.
 
+**Calendar.** "Calendar (.ics)" in the Files row downloads one all-day event per workout (title with length
+and climbing, the steps in the description) for the chosen range. Import it into Google Calendar, Apple
+Calendar or Outlook. It is a one-time copy: after you edit or regenerate the plan, export again, ideally into
+a separate calendar you can clear first.
+
+**Race readiness.** Beside the plan, a card compares your finished plan weeks (up to the last 4) with what the
+plan asked for in those weeks: longest run, weekly time and weekly climbing (road: longest run and weekly km).
+At 85% or more of the plan a row is "On track", from 60% "A little behind", below that "Behind". The peak
+the plan builds to is shown for scale.
+
 **Notices.** Warnings and info about the plan (below-baseline start, climbing that cannot be placed, and so
 on) sit in one collapsible "Plan notes" block, open after you generate a plan and closed after that. The
 race duration is shown once, in the plan header. "Saved" style messages fade after about six seconds.

@@ -170,3 +170,12 @@ button.danger:hover:not(:disabled) { background: var(--err-bg); }
 button.danger-link { color: var(--err); }
 [data-file-range], [data-ai-range] { width: auto; max-width: 100%; }
 .row label { display: inline-flex; gap: .4rem; align-items: center; }
+
+/* Race readiness */
+.rd-list { list-style: none; margin: .5rem 0; padding: 0; }
+.rd-row { margin-bottom: .8rem; }
+.rd-head { display: flex; justify-content: space-between; gap: .5rem; font-size: .9rem; }
+.rd-bar { position: relative; height: 8px; border-radius: 4px; background: var(--line); margin: .3rem 0; }
+.rd-now { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; background: var(--accent); }
+.rd-plan { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; background: var(--text); }
+.plan-side .card + .card { margin-top: 16px; }
